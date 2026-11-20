@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mm-ai-service"
+version = "0.1.0"
+description = "Model-agnostic AI service boundary for MM AI Platform"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi==0.165.0",
+  "pydantic==2.14.4",
+  "pydantic-settings==2.16.3",
+  "uvicorn[standard]==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "mypy==2.4.1",
+  "pip-audit==2.10.1",
+  "pytest==9.2.0",
+  "ruff==0.17.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mm_ai_service"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]

@@ -1,0 +1,57 @@
+# Dependencies and virtual environments
+node_modules/
+.pnpm-store/
+.venv/
+venv/
+
+# JavaScript and TypeScript build/test outputs
+.next/
+.turbo/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python caches and test outputs
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Environment secrets (examples remain tracked)
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Private runtime data
+*.db
+*.sqlite
+*.sqlite3
+/data/private/
+/datasets/private/
+/storage/
+/uploads/
+/logs/
+
+# Model weights and local model caches
+/models/
+*.safetensors
+*.gguf
+*.onnx
+*.pt
+*.pth
+/.cache/huggingface/
+/.cache/pip-audit/
+/.ollama/
+
+# Tooling and operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.log
+*.tmp
+*.temp
