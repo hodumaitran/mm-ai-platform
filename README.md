@@ -6,9 +6,10 @@ local inference provider behind explicit boundaries.
 
 ## Current scope
 
-Checkpoint 2.1 provides the pnpm/Turborepo workspace, a minimal Next.js web app, a NestJS business
-API, and a FastAPI AI service with operational health endpoints. Authentication, databases, RAG,
-agents, chat completion, and provider integration are intentionally not implemented.
+Checkpoint 2.2 adds a layered, factory-built internal architecture to the FastAPI AI service with
+deterministic lifecycle management, safe error contracts, request correlation, and local structured
+logging. Authentication, databases, RAG, agents, chat completion, and provider integration are
+intentionally not implemented.
 
 ## Prerequisites
 
@@ -92,5 +93,9 @@ reported after an actual workflow run.
 
 ## Known limitations
 
-Authentication, RBAC, databases, RAG, LLM gateway, Ollama integration, agents, containers, and
-observability are not implemented. The web contract test is not a browser-level test.
+Authentication, RBAC, databases, RAG, LLM gateway, Ollama integration, agents, containers, external
+telemetry, and browser-level web tests are not implemented. AI-service JSON logs are local process
+output only and deliberately exclude request bodies, query strings, headers, prompts, and secrets.
+
+AI-service architecture details are documented in
+[`docs/architecture/ai-service-architecture.md`](docs/architecture/ai-service-architecture.md).

@@ -1,12 +1,14 @@
 import uvicorn
 
-from mm_ai_service.main import app, settings
+from mm_ai_service.config import load_settings
 
 
 def run() -> None:
-    """Start the service from validated application settings."""
+    """Start Uvicorn with its application factory and validated process settings."""
+    settings = load_settings()
     uvicorn.run(
-        app,
+        "mm_ai_service.main:create_app",
+        factory=True,
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),

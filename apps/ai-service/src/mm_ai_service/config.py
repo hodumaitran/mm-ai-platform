@@ -1,4 +1,3 @@
-from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
@@ -12,6 +11,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_prefix="AI_SERVICE_",
         extra="forbid",
+        frozen=True,
     )
 
     env: Literal["development", "test", "production"] = "development"
@@ -20,6 +20,6 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
-@lru_cache
-def get_settings() -> Settings:
+def load_settings() -> Settings:
+    """Load a fresh settings instance using Pydantic's documented source precedence."""
     return Settings()

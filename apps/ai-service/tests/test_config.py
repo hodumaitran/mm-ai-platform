@@ -25,11 +25,15 @@ def test_settings_reject_empty_hosts() -> None:
         Settings(host="", _env_file=None)
 
 
-def test_application_import_fails_fast_for_invalid_environment() -> None:
+def test_settings_load_fails_fast_for_invalid_environment() -> None:
     environment = os.environ.copy()
     environment["AI_SERVICE_PORT"] = "0"
     result = subprocess.run(
-        [sys.executable, "-c", "import mm_ai_service.main"],
+        [
+            sys.executable,
+            "-c",
+            "from mm_ai_service.config import load_settings; load_settings()",
+        ],
         capture_output=True,
         check=False,
         env=environment,
@@ -37,3 +41,10 @@ def test_application_import_fails_fast_for_invalid_environment() -> None:
     )
     assert result.returncode != 0
     assert "validation error" in result.stderr.lower()
+
+
+def test_settings_are_immutable_and_have_safe_representation() -> None:
+    settings = Settings(env="test", _env_file=None)
+    assert "test" in repr(settings)
+    with pytest.raises(ValidationError):
+        settings.port = 9000  # type: ignore[misc]
