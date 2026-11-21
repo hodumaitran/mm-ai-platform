@@ -31,6 +31,10 @@ def test_domain_has_no_outward_or_framework_dependencies() -> None:
         (
             "fastapi",
             "starlette",
+            "httpx",
+            "requests",
+            "ollama",
+            "vllm",
             "mm_ai_service.application",
             "mm_ai_service.infrastructure",
             "mm_ai_service.presentation",
@@ -41,7 +45,16 @@ def test_domain_has_no_outward_or_framework_dependencies() -> None:
 def test_application_has_no_framework_or_outer_layer_dependencies() -> None:
     _assert_no_import_prefix(
         "application",
-        ("fastapi", "starlette", "mm_ai_service.infrastructure", "mm_ai_service.presentation"),
+        (
+            "fastapi",
+            "starlette",
+            "httpx",
+            "requests",
+            "ollama",
+            "vllm",
+            "mm_ai_service.infrastructure",
+            "mm_ai_service.presentation",
+        ),
     )
 
 

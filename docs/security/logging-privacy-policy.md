@@ -17,3 +17,6 @@ are accepted; all other values are replaced rather than logged.
 
 Future code must extend the allowlist only after privacy review and must add a negative disclosure
 test for every new metadata field.
+
+LLM Gateway events contain only fixed event names and safe machine error codes. Model identifiers,
+provider configuration, prompts, completions, token content, and reasoning traces are not logged.

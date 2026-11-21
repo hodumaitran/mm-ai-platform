@@ -6,9 +6,10 @@ local inference provider behind explicit boundaries.
 
 ## Current scope
 
-Checkpoint 2.2 adds a layered, factory-built internal architecture to the FastAPI AI service with
-deterministic lifecycle management, safe error contracts, request correlation, and local structured
-logging. Authentication, databases, RAG, agents, chat completion, and provider integration are
+Checkpoint 2.3 adds a model-neutral LLM Gateway foundation inside the layered FastAPI AI service.
+It provides immutable completion contracts, explicit provider selection, capability validation,
+end-to-end timeout, bounded concurrency, cancellation propagation, and typed streaming semantics.
+Authentication, databases, RAG, agents, HTTP chat endpoints, and real provider adapters are
 intentionally not implemented.
 
 ## Prerequisites
@@ -93,9 +94,10 @@ reported after an actual workflow run.
 
 ## Known limitations
 
-Authentication, RBAC, databases, RAG, LLM gateway, Ollama integration, agents, containers, external
-telemetry, and browser-level web tests are not implemented. AI-service JSON logs are local process
-output only and deliberately exclude request bodies, query strings, headers, prompts, and secrets.
+Authentication, RBAC, databases, RAG, Ollama/vLLM adapters, real inference, HTTP chat/streaming
+transports, agents, containers, external telemetry, and browser-level web tests are not implemented.
+AI-service JSON logs are local process output only and deliberately exclude request bodies, query
+strings, headers, prompts, completions, reasoning traces, and secrets.
 
 AI-service architecture details are documented in
 [`docs/architecture/ai-service-architecture.md`](docs/architecture/ai-service-architecture.md).

@@ -48,3 +48,37 @@ def test_settings_are_immutable_and_have_safe_representation() -> None:
     assert "test" in repr(settings)
     with pytest.raises(ValidationError):
         settings.port = 9000  # type: ignore[misc]
+
+
+def test_gateway_settings_have_safe_local_defaults() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.llm_provider is None
+    assert settings.llm_max_concurrency == 1
+    assert settings.llm_request_timeout_seconds == 120
+    assert settings.llm_default_temperature == 0.2
+    assert settings.llm_default_context_window == 4096
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("llm_provider", "unsafe provider"),
+        ("llm_max_concurrency", 0),
+        ("llm_request_timeout_seconds", 0),
+        ("llm_default_temperature", 2.1),
+        ("llm_default_max_output_tokens", 0),
+        ("llm_default_context_window", 0),
+    ],
+)
+def test_gateway_settings_reject_invalid_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value}, _env_file=None)  # type: ignore[arg-type]
+
+
+def test_gateway_settings_reject_output_limit_larger_than_context() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            llm_default_max_output_tokens=4097,
+            llm_default_context_window=4096,
+            _env_file=None,
+        )

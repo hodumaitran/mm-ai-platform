@@ -27,3 +27,67 @@ class CapabilityUnavailableError(ServiceError):
             "The requested capability is unavailable.",
             503,
         )
+
+
+class InvalidCompletionRequestError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_COMPLETION_REQUEST", "The completion request is invalid.", 400)
+
+
+class ProviderUnavailableError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROVIDER_UNAVAILABLE", "The configured provider is unavailable.", 503)
+
+
+class NoProviderConfiguredError(ProviderUnavailableError):
+    def __init__(self) -> None:
+        ServiceError.__init__(self, "PROVIDER_UNAVAILABLE", "No LLM provider is configured.", 503)
+
+
+class UnknownProviderError(ProviderUnavailableError):
+    def __init__(self) -> None:
+        ServiceError.__init__(
+            self,
+            "PROVIDER_UNAVAILABLE",
+            "The configured LLM provider is not registered.",
+            503,
+        )
+
+
+class ProviderConnectionError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROVIDER_CONNECTION_FAILURE", "The provider connection failed.", 503)
+
+
+class ProviderTimeoutError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROVIDER_TIMEOUT", "The provider request timed out.", 504)
+
+
+class ProviderOverloadError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROVIDER_OVERLOAD", "The provider is overloaded.", 503)
+
+
+class UnsupportedCapabilityError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("UNSUPPORTED_CAPABILITY", "The requested capability is unsupported.", 422)
+
+
+class InvalidProviderResponseError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "INVALID_PROVIDER_RESPONSE",
+            "The provider returned an invalid response.",
+            502,
+        )
+
+
+class RequestCancelledError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("REQUEST_CANCELLED", "The request was cancelled.", 499)
+
+
+class InternalGatewayError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INTERNAL_GATEWAY_FAILURE", "The LLM gateway failed.", 500)

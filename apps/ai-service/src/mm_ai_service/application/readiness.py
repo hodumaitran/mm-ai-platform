@@ -14,7 +14,7 @@ class Readiness(TypedDict):
     environment: str
 
 
-def describe_readiness(environment: str) -> Readiness:
+def describe_readiness(environment: str, *, inference_available: bool = False) -> Readiness:
     """Describe only capabilities implemented by the current service."""
     return {
         "service": "ai-service",
@@ -22,7 +22,7 @@ def describe_readiness(environment: str) -> Readiness:
         "capabilities": {
             "configuration": True,
             "ollama": False,
-            "inference": False,
+            "inference": inference_available,
         },
         "environment": environment,
     }

@@ -5,7 +5,15 @@ from mm_ai_service.config import Settings
 from mm_ai_service.domain.errors import (
     CapabilityUnavailableError,
     ConfigurationError,
+    InternalGatewayError,
+    InvalidCompletionRequestError,
+    InvalidProviderResponseError,
     InvalidRequestError,
+    ProviderConnectionError,
+    ProviderOverloadError,
+    ProviderTimeoutError,
+    RequestCancelledError,
+    UnsupportedCapabilityError,
 )
 from mm_ai_service.main import create_app
 
@@ -42,6 +50,14 @@ def test_domain_errors_have_stable_http_mappings() -> None:
         (InvalidRequestError(), 400, "INVALID_REQUEST"),
         (ConfigurationError(), 500, "CONFIGURATION_ERROR"),
         (CapabilityUnavailableError(), 503, "CAPABILITY_UNAVAILABLE"),
+        (InvalidCompletionRequestError(), 400, "INVALID_COMPLETION_REQUEST"),
+        (ProviderConnectionError(), 503, "PROVIDER_CONNECTION_FAILURE"),
+        (ProviderTimeoutError(), 504, "PROVIDER_TIMEOUT"),
+        (ProviderOverloadError(), 503, "PROVIDER_OVERLOAD"),
+        (UnsupportedCapabilityError(), 422, "UNSUPPORTED_CAPABILITY"),
+        (InvalidProviderResponseError(), 502, "INVALID_PROVIDER_RESPONSE"),
+        (RequestCancelledError(), 499, "REQUEST_CANCELLED"),
+        (InternalGatewayError(), 500, "INTERNAL_GATEWAY_FAILURE"),
     ]
     for error, status_code, code in cases:
         with TestClient(_app_with_failure(error), raise_server_exceptions=False) as client:
