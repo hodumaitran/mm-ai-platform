@@ -9,6 +9,7 @@ description = "Model-agnostic AI service boundary for MM AI Platform"
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "fastapi==0.165.0",
+  "httpx==0.28.1",
   "pydantic==2.14.4",
   "pydantic-settings==2.16.3",
   "uvicorn[standard]==0.54.0",
@@ -16,7 +17,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx==0.28.1",
   "mypy==2.4.1",
   "pip-audit==2.10.1",
   "pytest==9.2.0",
@@ -41,3 +41,6 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
+markers = [
+  "integration: requires an explicitly enabled local service",
+]

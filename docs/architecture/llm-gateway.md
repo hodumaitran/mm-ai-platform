@@ -2,9 +2,8 @@
 
 ## Implemented boundary
 
-Checkpoint 2.3 implements an in-process application service, not an HTTP chat endpoint and not a
-provider adapter. All tests use deterministic fake providers. The production composition root has no
-configured provider by default and makes no outbound inference request.
+Checkpoint 2.3 implements the in-process application service. Checkpoint 2.4 supplies an Ollama
+infrastructure adapter while retaining the same provider-neutral gateway and no public chat endpoint.
 
 ```mermaid
 flowchart LR
@@ -14,7 +13,7 @@ flowchart LR
   G --> S[Concurrency semaphore]
   G --> T[End-to-end deadline]
   R --> I[LLMProvider protocol]
-  OA[Future Ollama adapter] -. Checkpoint 2.4 .-> I
+  OA[Ollama adapter] -. infrastructure implementation .-> I
   VA[Future vLLM adapter] -. not implemented .-> I
 ```
 
@@ -62,5 +61,6 @@ and releases capacity. There is no SSE or other public transport in this checkpo
 
 ## Runtime readiness
 
-`/health` remains process liveness. `/ready` reports inference false when no configured provider is
-registered, which is the production state in Checkpoint 2.3. It does not contact Ollama.
+`/health` remains process liveness and never contacts Ollama. `/ready` reports separate provider,
+model, and inference-compatible states from the selected adapter. Ollama probes are bounded and
+cached, use only version/inventory/model-metadata APIs, and never generate text or load a model.

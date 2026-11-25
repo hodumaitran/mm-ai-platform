@@ -3,11 +3,20 @@ from typing import Literal
 from fastapi import APIRouter
 
 from mm_ai_service.application.gateway import LLMGateway
-from mm_ai_service.application.readiness import Readiness, describe_readiness
+from mm_ai_service.application.readiness import (
+    ProviderReadiness,
+    Readiness,
+    ReadinessProbe,
+    describe_readiness,
+)
 from mm_ai_service.config import Settings
 
 
-def create_operations_router(settings: Settings, gateway: LLMGateway) -> APIRouter:
+def create_operations_router(
+    settings: Settings,
+    gateway: LLMGateway,
+    readiness_probe: ReadinessProbe | None = None,
+) -> APIRouter:
     router = APIRouter(tags=["operations"])
 
     @router.get("/health")
@@ -18,6 +27,11 @@ def create_operations_router(settings: Settings, gateway: LLMGateway) -> APIRout
     @router.get("/ready")
     async def ready() -> Readiness:
         """Report only capabilities implemented in this checkpoint."""
-        return describe_readiness(settings.env, inference_available=gateway.is_available)
+        provider = (
+            await readiness_probe.check_readiness()
+            if readiness_probe is not None and gateway.is_available
+            else ProviderReadiness()
+        )
+        return describe_readiness(settings.env, provider)
 
     return router

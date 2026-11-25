@@ -1,4 +1,6 @@
+from ipaddress import ip_address
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,11 +26,56 @@ class Settings(BaseSettings):
     llm_default_temperature: float = Field(default=0.2, ge=0, le=2)
     llm_default_max_output_tokens: int = Field(default=1024, ge=1)
     llm_default_context_window: int = Field(default=4096, ge=1)
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = Field(
+        default="qwen3.5:35b",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+    )
+    ollama_network_policy: Literal["loopback", "private"] = "loopback"
+    ollama_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    ollama_read_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
+    ollama_readiness_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    ollama_readiness_cache_seconds: float = Field(default=10.0, ge=0, le=300)
 
     @model_validator(mode="after")
     def validate_generation_defaults(self) -> Self:
         if self.llm_default_max_output_tokens > self.llm_default_context_window:
             raise ValueError("LLM maximum output tokens cannot exceed the context window")
+        parsed = urlsplit(self.ollama_base_url)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in ("", "/")
+        ):
+            raise ValueError("Ollama base URL must be an HTTP origin without credentials")
+        try:
+            parsed_port = parsed.port
+        except ValueError as error:
+            raise ValueError("Ollama base URL has an invalid port") from error
+        if parsed_port is None:
+            raise ValueError("Ollama base URL must include an explicit port")
+        host = parsed.hostname
+        is_loopback = host == "localhost"
+        is_private = False
+        if not is_loopback:
+            try:
+                address = ip_address(host)
+            except ValueError as error:
+                raise ValueError(
+                    "Ollama host must be localhost or an explicit IP address"
+                ) from error
+            is_loopback = address.is_loopback
+            is_private = address.is_private
+        if self.ollama_network_policy == "loopback" and not is_loopback:
+            raise ValueError("Loopback Ollama policy requires a loopback host")
+        if self.ollama_network_policy == "private" and (
+            self.env != "production" or not (is_loopback or is_private)
+        ):
+            raise ValueError("Private Ollama policy requires production and a private IP")
         return self
 
 

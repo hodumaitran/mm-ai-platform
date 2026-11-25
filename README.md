@@ -6,11 +6,10 @@ local inference provider behind explicit boundaries.
 
 ## Current scope
 
-Checkpoint 2.3 adds a model-neutral LLM Gateway foundation inside the layered FastAPI AI service.
-It provides immutable completion contracts, explicit provider selection, capability validation,
-end-to-end timeout, bounded concurrency, cancellation propagation, and typed streaming semantics.
-Authentication, databases, RAG, agents, HTTP chat endpoints, and real provider adapters are
-intentionally not implemented.
+Checkpoint 2.4 adds a lifecycle-managed Ollama infrastructure adapter behind the model-neutral LLM
+Gateway. It uses the loopback local API, validates configured model availability, maps completion and
+streaming contracts, and reports cached provider/model readiness without inference. Authentication,
+databases, RAG, agents, and public HTTP chat/streaming endpoints remain intentionally absent.
 
 ## Prerequisites
 
@@ -19,7 +18,8 @@ intentionally not implemented.
 - Python 3.13 and the existing `.venv`
 - Git
 
-Ollama is not required for this checkpoint's service health checks.
+Ollama is optional unless `AI_SERVICE_LLM_PROVIDER=ollama` is selected. `/health` never contacts it;
+`/ready` performs bounded, cached metadata checks and never downloads or runs a model.
 
 For production, use the latest patched Node.js 26 Active LTS release. The CI workflow currently pins
 Node.js 26.13.0; the local development runtime remains unchanged at 26.5.0.
@@ -52,12 +52,12 @@ Set-Location apps\ai-service
 ..\..\.venv\Scripts\python.exe -m mm_ai_service
 ```
 
-| Service                     | URL                                   |  Port |
-| --------------------------- | ------------------------------------- | ----: |
-| Web                         | `http://127.0.0.1:3000`               |  3000 |
-| NestJS API                  | `http://127.0.0.1:3001/api/v1/health` |  3001 |
-| FastAPI AI service          | `http://127.0.0.1:8000/health`        |  8000 |
-| Ollama (future integration) | `http://127.0.0.1:11434`              | 11434 |
+| Service            | URL                                   |  Port |
+| ------------------ | ------------------------------------- | ----: |
+| Web                | `http://127.0.0.1:3000`               |  3000 |
+| NestJS API         | `http://127.0.0.1:3001/api/v1/health` |  3001 |
+| FastAPI AI service | `http://127.0.0.1:8000/health`        |  8000 |
+| Ollama             | `http://127.0.0.1:11434`              | 11434 |
 
 ## Quality commands
 
@@ -94,10 +94,11 @@ reported after an actual workflow run.
 
 ## Known limitations
 
-Authentication, RBAC, databases, RAG, Ollama/vLLM adapters, real inference, HTTP chat/streaming
-transports, agents, containers, external telemetry, and browser-level web tests are not implemented.
-AI-service JSON logs are local process output only and deliberately exclude request bodies, query
-strings, headers, prompts, completions, reasoning traces, and secrets.
+Authentication, RBAC, databases, RAG, vLLM adapters, public HTTP chat/streaming transports, agents,
+containers, external telemetry, and browser-level web tests are not implemented. AI-service JSON
+logs are local process output only and deliberately exclude request bodies, query strings, headers,
+prompts, completions, reasoning traces, provider payloads, and secrets. Ollama models are never
+downloaded automatically.
 
 AI-service architecture details are documented in
 [`docs/architecture/ai-service-architecture.md`](docs/architecture/ai-service-architecture.md).

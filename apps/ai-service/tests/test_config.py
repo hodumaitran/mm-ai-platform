@@ -57,6 +57,9 @@ def test_gateway_settings_have_safe_local_defaults() -> None:
     assert settings.llm_request_timeout_seconds == 120
     assert settings.llm_default_temperature == 0.2
     assert settings.llm_default_context_window == 4096
+    assert settings.ollama_base_url == "http://127.0.0.1:11434"
+    assert settings.ollama_model == "qwen3.5:35b"
+    assert settings.ollama_network_policy == "loopback"
 
 
 @pytest.mark.parametrize(
@@ -68,6 +71,14 @@ def test_gateway_settings_have_safe_local_defaults() -> None:
         ("llm_default_temperature", 2.1),
         ("llm_default_max_output_tokens", 0),
         ("llm_default_context_window", 0),
+        ("ollama_base_url", "https://ollama.com"),
+        ("ollama_base_url", "http://user:password@127.0.0.1:11434"),
+        ("ollama_base_url", "http://192.168.1.20:11434"),
+        ("ollama_model", "invalid model"),
+        ("ollama_connect_timeout_seconds", 0),
+        ("ollama_read_timeout_seconds", 0),
+        ("ollama_readiness_timeout_seconds", 0),
+        ("ollama_readiness_cache_seconds", -1),
     ],
 )
 def test_gateway_settings_reject_invalid_values(field: str, value: object) -> None:
@@ -82,3 +93,20 @@ def test_gateway_settings_reject_output_limit_larger_than_context() -> None:
             llm_default_context_window=4096,
             _env_file=None,
         )
+
+
+def test_private_ollama_policy_requires_production_and_private_ip() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            env="development",
+            ollama_network_policy="private",
+            ollama_base_url="http://192.168.1.20:11434",
+            _env_file=None,
+        )
+    settings = Settings(
+        env="production",
+        ollama_network_policy="private",
+        ollama_base_url="http://192.168.1.20:11434",
+        _env_file=None,
+    )
+    assert settings.ollama_network_policy == "private"

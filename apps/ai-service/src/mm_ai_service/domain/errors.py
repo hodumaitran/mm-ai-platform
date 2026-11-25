@@ -39,6 +39,11 @@ class ProviderUnavailableError(ServiceError):
         super().__init__("PROVIDER_UNAVAILABLE", "The configured provider is unavailable.", 503)
 
 
+class ModelUnavailableError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("MODEL_UNAVAILABLE", "The configured model is unavailable.", 503)
+
+
 class NoProviderConfiguredError(ProviderUnavailableError):
     def __init__(self) -> None:
         ServiceError.__init__(self, "PROVIDER_UNAVAILABLE", "No LLM provider is configured.", 503)

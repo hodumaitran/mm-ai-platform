@@ -1,9 +1,15 @@
 from fastapi.testclient import TestClient
 
+from mm_ai_service.application.readiness import ProviderReadiness
 from mm_ai_service.config import Settings
 from mm_ai_service.domain.llm import CompletionRequest
 from mm_ai_service.main import create_app
 from tests.fakes import FakeProvider, empty_stream, response_for
+
+
+class ReadyProbe:
+    async def check_readiness(self) -> ProviderReadiness:
+        return ProviderReadiness(True, True, True)
 
 
 def test_health_reports_process_liveness() -> None:
@@ -23,6 +29,7 @@ def test_ready_does_not_claim_inference_readiness() -> None:
         "capabilities": {
             "configuration": True,
             "ollama": False,
+            "model": False,
             "inference": False,
         },
         "environment": "test",
@@ -36,6 +43,7 @@ def test_ready_reflects_an_explicitly_configured_fake_provider() -> None:
     app = create_app(
         Settings(env="test", llm_provider="fake", _env_file=None),
         providers=(FakeProvider(complete, empty_stream),),
+        readiness_probe=ReadyProbe(),
     )
     with TestClient(app) as client:
         response = client.get("/ready")

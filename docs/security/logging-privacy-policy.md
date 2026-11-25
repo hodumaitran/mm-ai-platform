@@ -20,3 +20,5 @@ test for every new metadata field.
 
 LLM Gateway events contain only fixed event names and safe machine error codes. Model identifiers,
 provider configuration, prompts, completions, token content, and reasoning traces are not logged.
+The Ollama adapter emits no request/response logs, ignores `message.thinking` payloads, disables
+environment-derived HTTP proxies, and never serializes raw provider errors.
