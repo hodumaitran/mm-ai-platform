@@ -63,3 +63,15 @@ On the accepted host, cold model load plus completion took 176.8538 seconds. Onc
 completions took 0.4864 seconds with thinking disabled and 5.4298 seconds with thinking enabled;
 streaming TTFT was 0.1172 seconds. These are local observations, not capacity guarantees. Full
 evidence and resource samples are recorded in `docs/checkpoints/checkpoint-2.4.md`.
+
+## Checkpoint 2.5 transport policy
+
+Chat transport does not change readiness or load the model at startup. The accepted configuration
+uses one active inference, one pending request, a 30-second admission timeout, a 240-second first
+content timeout, a 30-second in-stream inactivity timeout, and a 300-second total deadline. The
+Ollama read timeout is 300 seconds. These values accommodate the observed cold load but remain
+bounded.
+
+The browser never calls this service or Ollama directly. Local verification begins at the Next.js
+same-origin route and passes through NestJS. Server origins are configured only with `API_BASE_URL`
+and `AI_SERVICE_BASE_URL`; neither is public browser configuration.

@@ -13,7 +13,7 @@ describe('Health endpoint (e2e)', () => {
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
+    app = moduleRef.createNestApplication({ bodyParser: false });
     configureApplication(app);
     await app.listen(0, '127.0.0.1');
   });
@@ -38,6 +38,7 @@ describe('Health endpoint (e2e)', () => {
     }
     expect(payload.error).toBe('Request failed');
     expect(payload.path).toBe('/api/v1/missing');
+    expect(typeof payload.requestId).toBe('string');
     expect(payload.statusCode).toBe(404);
     expect(typeof payload.timestamp).toBe('string');
     expect(JSON.stringify(payload)).not.toContain('private');

@@ -5,7 +5,12 @@ import pytest
 
 from mm_ai_service.application.gateway import GatewayPolicy, LLMGateway
 from mm_ai_service.application.registry import ProviderRegistry
-from mm_ai_service.domain.errors import InvalidProviderResponseError, UnsupportedCapabilityError
+from mm_ai_service.domain.errors import (
+    FirstTokenTimeoutError,
+    InvalidProviderResponseError,
+    StreamInactivityTimeoutError,
+    UnsupportedCapabilityError,
+)
 from mm_ai_service.domain.llm import (
     ChatMessage,
     CompletionFinished,
@@ -134,3 +139,53 @@ def test_stream_cancellation_closes_provider_and_releases_capacity() -> None:
         return closed, response.message.content
 
     assert asyncio.run(exercise()) == (True, "response")
+
+
+def test_first_content_token_timeout_is_distinct_and_cancels_iterator() -> None:
+    cancelled = False
+
+    async def complete(request: CompletionRequest):  # type: ignore[no-untyped-def]
+        return response_for(request)
+
+    async def stream(request: CompletionRequest) -> AsyncIterator[StreamEvent]:
+        nonlocal cancelled
+        yield StreamStarted(request.model_identifier)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled = True
+
+    async def collect() -> None:
+        provider = FakeProvider(complete, stream, capabilities=ModelCapabilities(streaming=True))
+        gateway = LLMGateway(
+            ProviderRegistry((provider,), "fake"),
+            GatewayPolicy(first_token_timeout_seconds=0.01, request_timeout_seconds=1),
+        )
+        async for _event in gateway.stream(_request()):
+            pass
+
+    with pytest.raises(FirstTokenTimeoutError):
+        asyncio.run(collect())
+    assert cancelled is True
+
+
+def test_stream_inactivity_timeout_after_content_is_distinct() -> None:
+    async def complete(request: CompletionRequest):  # type: ignore[no-untyped-def]
+        return response_for(request)
+
+    async def stream(request: CompletionRequest) -> AsyncIterator[StreamEvent]:
+        yield StreamStarted(request.model_identifier)
+        yield ContentDelta("first")
+        await asyncio.Event().wait()
+
+    async def collect() -> None:
+        provider = FakeProvider(complete, stream, capabilities=ModelCapabilities(streaming=True))
+        gateway = LLMGateway(
+            ProviderRegistry((provider,), "fake"),
+            GatewayPolicy(stream_inactivity_timeout_seconds=0.01, request_timeout_seconds=1),
+        )
+        async for _event in gateway.stream(_request()):
+            pass
+
+    with pytest.raises(StreamInactivityTimeoutError):
+        asyncio.run(collect())

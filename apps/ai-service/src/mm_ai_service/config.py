@@ -22,10 +22,19 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     llm_provider: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")
     llm_max_concurrency: int = Field(default=1, ge=1, le=64)
-    llm_request_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
+    llm_max_pending_requests: int = Field(default=1, ge=0, le=64)
+    llm_admission_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
+    llm_first_token_timeout_seconds: float = Field(default=240.0, gt=0, le=3600)
+    llm_stream_inactivity_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
+    llm_request_timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
     llm_default_temperature: float = Field(default=0.2, ge=0, le=2)
     llm_default_max_output_tokens: int = Field(default=1024, ge=1)
     llm_default_context_window: int = Field(default=4096, ge=1)
+    chat_max_body_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    chat_max_messages: int = Field(default=16, ge=1, le=128)
+    chat_max_message_characters: int = Field(default=2048, ge=1, le=65536)
+    chat_max_input_characters: int = Field(default=3072, ge=1, le=262144)
+    chat_max_output_tokens: int = Field(default=1024, ge=1)
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = Field(
         default="qwen3.5:35b",
@@ -33,14 +42,30 @@ class Settings(BaseSettings):
     )
     ollama_network_policy: Literal["loopback", "private"] = "loopback"
     ollama_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
-    ollama_read_timeout_seconds: float = Field(default=120.0, gt=0, le=3600)
+    ollama_read_timeout_seconds: float = Field(default=300.0, gt=0, le=3600)
     ollama_readiness_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     ollama_readiness_cache_seconds: float = Field(default=10.0, ge=0, le=300)
 
     @model_validator(mode="after")
     def validate_generation_defaults(self) -> Self:
+        host_is_loopback = self.host == "localhost"
+        if not host_is_loopback:
+            try:
+                host_is_loopback = ip_address(self.host).is_loopback
+            except ValueError as error:
+                raise ValueError("AI service host must be a loopback address") from error
+        if not host_is_loopback:
+            raise ValueError("AI service host must be a loopback address")
         if self.llm_default_max_output_tokens > self.llm_default_context_window:
             raise ValueError("LLM maximum output tokens cannot exceed the context window")
+        if self.chat_max_output_tokens > self.llm_default_context_window:
+            raise ValueError("Chat maximum output tokens cannot exceed the context window")
+        if self.chat_max_input_characters + self.chat_max_output_tokens > (
+            self.llm_default_context_window
+        ):
+            raise ValueError("Chat input and output budgets cannot exceed the context window")
+        if self.chat_max_message_characters > self.chat_max_input_characters:
+            raise ValueError("Chat message limit cannot exceed the aggregate input limit")
         parsed = urlsplit(self.ollama_base_url)
         if (
             parsed.scheme != "http"

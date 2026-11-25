@@ -58,6 +58,12 @@ def create_app(
         registry,
         GatewayPolicy(
             max_concurrency=resolved_settings.llm_max_concurrency,
+            max_pending_requests=resolved_settings.llm_max_pending_requests,
+            admission_timeout_seconds=resolved_settings.llm_admission_timeout_seconds,
+            first_token_timeout_seconds=resolved_settings.llm_first_token_timeout_seconds,
+            stream_inactivity_timeout_seconds=(
+                resolved_settings.llm_stream_inactivity_timeout_seconds
+            ),
             request_timeout_seconds=resolved_settings.llm_request_timeout_seconds,
             generation_defaults=GenerationOptions(
                 temperature=resolved_settings.llm_default_temperature,
@@ -79,6 +85,11 @@ def create_app(
     app.add_middleware(RequestContextMiddleware, logger=resolved_logger)
     register_error_handlers(app, resolved_logger)
     app.include_router(
-        create_operations_router(resolved_settings, gateway, resolved_readiness_probe)
+        create_operations_router(
+            resolved_settings,
+            gateway,
+            resolved_readiness_probe,
+            resolved_logger,
+        )
     )
     return app

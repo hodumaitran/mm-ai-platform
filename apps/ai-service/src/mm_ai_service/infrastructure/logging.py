@@ -11,12 +11,20 @@ SERVICE_NAME = "ai-service"
 SAFE_METADATA_KEYS = frozenset(
     {
         "duration_ms",
+        "admission_outcome",
+        "completion_tokens",
         "error_code",
         "exception_type",
         "method",
         "path",
+        "outcome",
+        "prompt_tokens",
+        "provider_identifier",
         "resource",
+        "route",
         "status_code",
+        "time_to_first_content_ms",
+        "timeout_category",
     }
 )
 

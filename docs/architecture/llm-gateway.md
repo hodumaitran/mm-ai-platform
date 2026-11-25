@@ -3,11 +3,12 @@
 ## Implemented boundary
 
 Checkpoint 2.3 implements the in-process application service. Checkpoint 2.4 supplies an Ollama
-infrastructure adapter while retaining the same provider-neutral gateway and no public chat endpoint.
+infrastructure adapter, and Checkpoint 2.5 adds a thin versioned HTTP/SSE transport while retaining
+the same provider-neutral gateway.
 
 ```mermaid
 flowchart LR
-  P[Future presentation endpoint] --> G[LLMGateway]
+  P[FastAPI chat transport] --> G[LLMGateway]
   G --> R[Explicit ProviderRegistry]
   G --> C[Domain contracts and capabilities]
   G --> S[Concurrency semaphore]
@@ -23,8 +24,8 @@ flowchart LR
 2. Validate chat, thinking, streaming, and context capabilities before entering provider capacity.
 3. Merge caller options with explicit defaults: temperature `0.2`, maximum output tokens `1024`, and
    context window `4096` unless configured otherwise.
-4. Apply one end-to-end deadline around queue waiting and provider execution/iteration.
-5. Acquire bounded capacity. The default and local-inference target is one concurrent request.
+4. Apply bounded admission, first-content, inactivity, and total deadlines around provider work.
+5. Acquire bounded capacity. The local-inference target is one active and one pending request.
 6. Call the asynchronous provider contract and validate its provider-neutral response or stream.
 
 No retry occurs. Unknown or absent providers report unavailability and never fall back to an external
@@ -32,10 +33,10 @@ service.
 
 ## Timeout, concurrency, and cancellation
 
-`AI_SERVICE_LLM_MAX_CONCURRENCY` controls an `asyncio.Semaphore` and defaults to `1`.
-`AI_SERVICE_LLM_REQUEST_TIMEOUT_SECONDS` defaults to `120`. The timeout includes time waiting for the
-semaphore and the complete provider operation; streaming uses the same deadline across the full async
-iteration. A queued request therefore cannot wait indefinitely.
+The admission controller defaults to one active and one pending request. Admission, first-content,
+stream-inactivity, and total request timeouts are independently bounded. The incoming remaining
+deadline is clamped to the service policy, so a downstream service cannot extend the caller's budget.
+A queued request therefore cannot wait indefinitely.
 
 Context managers release capacity after success, normalized failure, timeout, or cancellation.
 External `asyncio.CancelledError` is logged only as a safe event and re-raised unchanged. It is not
@@ -57,7 +58,8 @@ with a terminal finished/error event, match the requested model identifier, and 
 event types. Events are yielded as received without buffering or splitting a completed response.
 
 Consumers must iterate or close/cancel the async generator. Cancellation closes the provider iterator
-and releases capacity. There is no SSE or other public transport in this checkpoint.
+and releases capacity. Checkpoint 2.5 maps these typed events to a versioned SSE contract without
+exposing provider-specific frames or reasoning traces.
 
 ## Runtime readiness
 

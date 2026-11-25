@@ -1,17 +1,7 @@
 import type { NextConfig } from 'next';
+import { validateWebEnvironment } from './src/server/environment.ts';
 
-export type WebEnvironment = {
-  apiBaseUrl: URL;
-};
-
-export function validateWebEnvironment(input: Record<string, string | undefined>): WebEnvironment {
-  const apiBaseUrl = new URL(input.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:3001/api/v1');
-  if (!['http:', 'https:'].includes(apiBaseUrl.protocol)) {
-    throw new Error('NEXT_PUBLIC_API_BASE_URL must use HTTP or HTTPS');
-  }
-
-  return { apiBaseUrl };
-}
+export { validateWebEnvironment } from './src/server/environment.ts';
 
 validateWebEnvironment(process.env);
 

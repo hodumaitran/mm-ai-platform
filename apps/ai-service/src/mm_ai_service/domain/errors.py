@@ -15,6 +15,16 @@ class InvalidRequestError(ServiceError):
         super().__init__("INVALID_REQUEST", message, 400)
 
 
+class PayloadTooLargeError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PAYLOAD_TOO_LARGE", "The request body is too large.", 413)
+
+
+class UnsupportedMediaTypeError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json.", 415)
+
+
 class ConfigurationError(ServiceError):
     def __init__(self) -> None:
         super().__init__("CONFIGURATION_ERROR", "The service is misconfigured.", 500)
@@ -67,6 +77,38 @@ class ProviderConnectionError(ServiceError):
 class ProviderTimeoutError(ServiceError):
     def __init__(self) -> None:
         super().__init__("PROVIDER_TIMEOUT", "The provider request timed out.", 504)
+
+
+class AdmissionTimeoutError(ProviderTimeoutError):
+    def __init__(self) -> None:
+        ServiceError.__init__(self, "ADMISSION_TIMEOUT", "Inference admission timed out.", 503)
+
+
+class FirstTokenTimeoutError(ProviderTimeoutError):
+    def __init__(self) -> None:
+        ServiceError.__init__(
+            self, "FIRST_TOKEN_TIMEOUT", "The first content token timed out.", 504
+        )
+
+
+class StreamInactivityTimeoutError(ProviderTimeoutError):
+    def __init__(self) -> None:
+        ServiceError.__init__(
+            self,
+            "STREAM_INACTIVITY_TIMEOUT",
+            "The inference stream became inactive.",
+            504,
+        )
+
+
+class RequestDeadlineExceededError(ProviderTimeoutError):
+    def __init__(self) -> None:
+        ServiceError.__init__(
+            self,
+            "REQUEST_DEADLINE_EXCEEDED",
+            "The request deadline was exceeded.",
+            504,
+        )
 
 
 class ProviderOverloadError(ServiceError):

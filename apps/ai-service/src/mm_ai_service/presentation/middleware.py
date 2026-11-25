@@ -30,6 +30,7 @@ class RequestContextMiddleware:
         candidate = raw_candidate.decode("latin-1") if raw_candidate else None
         request_id = resolve_request_id(candidate)
         scope.setdefault("state", {})["request_id"] = request_id
+        scope["state"]["request_started_monotonic"] = time.monotonic()
         token = set_request_id(request_id)
         started = time.perf_counter()
         status_code = 500

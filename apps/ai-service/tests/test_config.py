@@ -25,6 +25,12 @@ def test_settings_reject_empty_hosts() -> None:
         Settings(host="", _env_file=None)
 
 
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "example.com"])
+def test_settings_reject_non_loopback_hosts(host: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(host=host, _env_file=None)
+
+
 def test_settings_load_fails_fast_for_invalid_environment() -> None:
     environment = os.environ.copy()
     environment["AI_SERVICE_PORT"] = "0"
@@ -54,9 +60,18 @@ def test_gateway_settings_have_safe_local_defaults() -> None:
     settings = Settings(_env_file=None)
     assert settings.llm_provider is None
     assert settings.llm_max_concurrency == 1
-    assert settings.llm_request_timeout_seconds == 120
+    assert settings.llm_max_pending_requests == 1
+    assert settings.llm_admission_timeout_seconds == 30
+    assert settings.llm_first_token_timeout_seconds == 240
+    assert settings.llm_stream_inactivity_timeout_seconds == 30
+    assert settings.llm_request_timeout_seconds == 300
     assert settings.llm_default_temperature == 0.2
     assert settings.llm_default_context_window == 4096
+    assert settings.chat_max_body_bytes == 65536
+    assert settings.chat_max_messages == 16
+    assert settings.chat_max_message_characters == 2048
+    assert settings.chat_max_input_characters == 3072
+    assert settings.chat_max_output_tokens == 1024
     assert settings.ollama_base_url == "http://127.0.0.1:11434"
     assert settings.ollama_model == "qwen3.5:35b"
     assert settings.ollama_network_policy == "loopback"

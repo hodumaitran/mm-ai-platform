@@ -4,7 +4,12 @@ import pytest
 
 from mm_ai_service.application.gateway import GatewayPolicy, LLMGateway
 from mm_ai_service.application.registry import ProviderRegistry
-from mm_ai_service.domain.errors import ProviderConnectionError, ProviderTimeoutError
+from mm_ai_service.domain.errors import (
+    AdmissionTimeoutError,
+    ProviderConnectionError,
+    ProviderOverloadError,
+    ProviderTimeoutError,
+)
 from mm_ai_service.domain.llm import ChatMessage, CompletionRequest, MessageRole
 from tests.fakes import FakeProvider, empty_stream, response_for
 
@@ -128,3 +133,78 @@ def test_cancellation_propagates_and_releases_semaphore() -> None:
         return cancelled, second.message.content
 
     assert asyncio.run(exercise()) == (True, "response")
+
+
+def test_admission_queue_is_bounded_and_reports_overload() -> None:
+    async def exercise() -> int:
+        calls = 0
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def complete(request: CompletionRequest):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return response_for(request)
+
+        provider = FakeProvider(complete, empty_stream)
+        gateway = LLMGateway(
+            ProviderRegistry((provider,), "fake"),
+            GatewayPolicy(
+                max_concurrency=1,
+                max_pending_requests=1,
+                admission_timeout_seconds=1,
+                request_timeout_seconds=2,
+            ),
+        )
+        first = asyncio.create_task(gateway.complete(_request()))
+        await entered.wait()
+        queued = asyncio.create_task(gateway.complete(_request()))
+        await asyncio.sleep(0)
+        with pytest.raises(ProviderOverloadError):
+            await gateway.complete(_request())
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        release.set()
+        await first
+        return calls
+
+    assert asyncio.run(exercise()) == 1
+
+
+def test_admission_timeout_does_not_call_provider_or_leak_queue_slot() -> None:
+    async def exercise() -> tuple[int, str]:
+        calls = 0
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def complete(request: CompletionRequest):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await release.wait()
+            return response_for(request)
+
+        provider = FakeProvider(complete, empty_stream)
+        gateway = LLMGateway(
+            ProviderRegistry((provider,), "fake"),
+            GatewayPolicy(
+                max_concurrency=1,
+                max_pending_requests=1,
+                admission_timeout_seconds=0.01,
+                request_timeout_seconds=1,
+            ),
+        )
+        first = asyncio.create_task(gateway.complete(_request()))
+        await entered.wait()
+        with pytest.raises(AdmissionTimeoutError):
+            await gateway.complete(_request())
+        release.set()
+        await first
+        result = await gateway.complete(_request())
+        return calls, result.message.content
+
+    assert asyncio.run(exercise()) == (2, "response")

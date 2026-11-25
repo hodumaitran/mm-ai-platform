@@ -16,7 +16,7 @@ test('web configuration uses the private API default', () => {
 
 test('web configuration rejects non-HTTP API URLs', () => {
   assert.throws(
-    () => validateWebEnvironment({ NEXT_PUBLIC_API_BASE_URL: 'file:///private/config' }),
-    /must use HTTP or HTTPS/,
+    () => validateWebEnvironment({ API_BASE_URL: 'file:///private/config' }),
+    /credential-free loopback HTTP URL/,
   );
 });

@@ -3,18 +3,24 @@ from fastapi.testclient import TestClient
 
 from mm_ai_service.config import Settings
 from mm_ai_service.domain.errors import (
+    AdmissionTimeoutError,
     CapabilityUnavailableError,
     ConfigurationError,
+    FirstTokenTimeoutError,
     InternalGatewayError,
     InvalidCompletionRequestError,
     InvalidProviderResponseError,
     InvalidRequestError,
     ModelUnavailableError,
+    PayloadTooLargeError,
     ProviderConnectionError,
     ProviderOverloadError,
     ProviderTimeoutError,
     RequestCancelledError,
+    RequestDeadlineExceededError,
+    StreamInactivityTimeoutError,
     UnsupportedCapabilityError,
+    UnsupportedMediaTypeError,
 )
 from mm_ai_service.main import create_app
 
@@ -49,12 +55,18 @@ def test_unhandled_error_contract_does_not_disclose_exception_details() -> None:
 def test_domain_errors_have_stable_http_mappings() -> None:
     cases = [
         (InvalidRequestError(), 400, "INVALID_REQUEST"),
+        (PayloadTooLargeError(), 413, "PAYLOAD_TOO_LARGE"),
+        (UnsupportedMediaTypeError(), 415, "UNSUPPORTED_MEDIA_TYPE"),
         (ConfigurationError(), 500, "CONFIGURATION_ERROR"),
         (CapabilityUnavailableError(), 503, "CAPABILITY_UNAVAILABLE"),
         (InvalidCompletionRequestError(), 400, "INVALID_COMPLETION_REQUEST"),
         (ModelUnavailableError(), 503, "MODEL_UNAVAILABLE"),
         (ProviderConnectionError(), 503, "PROVIDER_CONNECTION_FAILURE"),
         (ProviderTimeoutError(), 504, "PROVIDER_TIMEOUT"),
+        (AdmissionTimeoutError(), 503, "ADMISSION_TIMEOUT"),
+        (FirstTokenTimeoutError(), 504, "FIRST_TOKEN_TIMEOUT"),
+        (StreamInactivityTimeoutError(), 504, "STREAM_INACTIVITY_TIMEOUT"),
+        (RequestDeadlineExceededError(), 504, "REQUEST_DEADLINE_EXCEEDED"),
         (ProviderOverloadError(), 503, "PROVIDER_OVERLOAD"),
         (UnsupportedCapabilityError(), 422, "UNSUPPORTED_CAPABILITY"),
         (InvalidProviderResponseError(), 502, "INVALID_PROVIDER_RESPONSE"),

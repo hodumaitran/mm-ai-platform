@@ -6,10 +6,11 @@ local inference provider behind explicit boundaries.
 
 ## Current scope
 
-Checkpoint 2.4 adds a lifecycle-managed Ollama infrastructure adapter behind the model-neutral LLM
-Gateway. It uses the loopback local API, validates configured model availability, maps completion and
-streaming contracts, and reports cached provider/model readiness without inference. Authentication,
-databases, RAG, agents, and public HTTP chat/streaming endpoints remain intentionally absent.
+Checkpoint 2.5 adds a versioned Chat Completion API and end-to-end SSE transport while reusing the
+lifecycle-managed Ollama adapter and model-neutral LLM Gateway. Browser requests remain same-origin
+through the Next.js server boundary, NestJS remains the business API, and FastAPI owns inference
+orchestration. Authentication, databases, RAG, agents, and a final chat UI remain intentionally
+absent.
 
 ## Prerequisites
 
@@ -59,6 +60,15 @@ Set-Location apps\ai-service
 | FastAPI AI service | `http://127.0.0.1:8000/health`        |  8000 |
 | Ollama             | `http://127.0.0.1:11434`              | 11434 |
 
+Local development chat endpoints are:
+
+- `POST http://127.0.0.1:3000/api/v1/chat/completions`
+- `POST http://127.0.0.1:3000/api/v1/chat/completions/stream`
+
+The web route uses server-only `API_BASE_URL`; no `NEXT_PUBLIC` service URL is accepted. These routes
+have no authentication yet and must remain loopback-only until a later checkpoint adds production
+access control.
+
 ## Quality commands
 
 ```powershell
@@ -94,8 +104,8 @@ reported after an actual workflow run.
 
 ## Known limitations
 
-Authentication, RBAC, databases, RAG, vLLM adapters, public HTTP chat/streaming transports, agents,
-containers, external telemetry, and browser-level web tests are not implemented. AI-service JSON
+Authentication, RBAC, databases, RAG, vLLM adapters, a final chat UI, agents, containers, external
+telemetry, and production deployment are not implemented. AI-service JSON
 logs are local process output only and deliberately exclude request bodies, query strings, headers,
 prompts, completions, reasoning traces, provider payloads, and secrets. Ollama models are never
 downloaded automatically.
