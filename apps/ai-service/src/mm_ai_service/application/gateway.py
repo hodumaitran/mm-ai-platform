@@ -120,6 +120,11 @@ class LLMGateway:
     def is_available(self) -> bool:
         return self._registry.is_available
 
+    @property
+    def generation_defaults(self) -> GenerationOptions:
+        """Authoritative runtime generation limits, exposed read-only to prompt policy."""
+        return self._policy.generation_defaults
+
     async def complete(
         self,
         request: CompletionRequest,

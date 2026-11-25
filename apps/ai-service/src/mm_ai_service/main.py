@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from mm_ai_service.application.gateway import GatewayPolicy, LLMGateway
 from mm_ai_service.application.lifecycle import ManagedResource
 from mm_ai_service.application.observability import EventLogger
+from mm_ai_service.application.prompts import PromptService
 from mm_ai_service.application.providers import LLMProvider
 from mm_ai_service.application.readiness import ReadinessProbe
 from mm_ai_service.application.registry import ProviderRegistry
@@ -18,6 +19,7 @@ from mm_ai_service.domain.llm import GenerationOptions
 from mm_ai_service.infrastructure.lifecycle import application_lifespan
 from mm_ai_service.infrastructure.logging import build_service_logger
 from mm_ai_service.infrastructure.ollama import OllamaProvider
+from mm_ai_service.infrastructure.prompts import build_builtin_prompt_registry
 from mm_ai_service.presentation.errors import register_error_handlers
 from mm_ai_service.presentation.middleware import RequestContextMiddleware
 from mm_ai_service.presentation.routes import create_operations_router
@@ -73,6 +75,12 @@ def create_app(
         ),
         logger=resolved_logger,
     )
+    prompt_service = PromptService(
+        build_builtin_prompt_registry(),
+        gateway,
+        resolved_settings.ollama_model,
+        logger=resolved_logger,
+    )
 
     app = FastAPI(
         title="MM AI Service",
@@ -83,6 +91,7 @@ def create_app(
         lifespan=application_lifespan(resolved_resources, resolved_logger),
     )
     app.add_middleware(RequestContextMiddleware, logger=resolved_logger)
+    app.state.prompt_service = prompt_service
     register_error_handlers(app, resolved_logger)
     app.include_router(
         create_operations_router(

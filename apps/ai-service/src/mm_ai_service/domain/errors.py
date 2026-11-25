@@ -138,3 +138,62 @@ class RequestCancelledError(ServiceError):
 class InternalGatewayError(ServiceError):
     def __init__(self) -> None:
         super().__init__("INTERNAL_GATEWAY_FAILURE", "The LLM gateway failed.", 500)
+
+
+class PromptNotFoundError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROMPT_NOT_FOUND", "The requested prompt is not available.", 404)
+
+
+class PromptVersionNotFoundError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "PROMPT_VERSION_NOT_FOUND", "The requested prompt version is not available.", 404
+        )
+
+
+class DuplicatePromptRegistrationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("DUPLICATE_PROMPT", "The prompt version is already registered.", 409)
+
+
+class InvalidPromptTemplateError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_PROMPT_TEMPLATE", "The prompt template is invalid.", 422)
+
+
+class MissingPromptVariableError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("MISSING_PROMPT_VARIABLE", "A required prompt variable is missing.", 400)
+
+
+class UnknownPromptVariableError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("UNKNOWN_PROMPT_VARIABLE", "The prompt contains an unknown variable.", 400)
+
+
+class InvalidPromptVariableError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_PROMPT_VARIABLE", "A prompt variable is invalid.", 400)
+
+
+class PromptPolicyViolationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROMPT_POLICY_VIOLATION", "The prompt request violates its policy.", 422)
+
+
+class PromptBudgetExceededError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "PROMPT_BUDGET_EXCEEDED", "The prompt request exceeds its token budget.", 422
+        )
+
+
+class PromptRegistrySealedError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("PROMPT_REGISTRY_SEALED", "The prompt registry is sealed.", 409)
+
+
+class InvalidPromptProfileError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_PROMPT_PROFILE", "The prompt profile is invalid.", 422)

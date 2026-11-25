@@ -6,11 +6,13 @@ local inference provider behind explicit boundaries.
 
 ## Current scope
 
-Checkpoint 2.5 adds a versioned Chat Completion API and end-to-end SSE transport while reusing the
-lifecycle-managed Ollama adapter and model-neutral LLM Gateway. Browser requests remain same-origin
-through the Next.js server boundary, NestJS remains the business API, and FastAPI owns inference
-orchestration. Authentication, databases, RAG, agents, and a final chat UI remain intentionally
-absent.
+Checkpoint 2.6 adds centralized, immutable and model-neutral prompt management inside the AI
+service: a registry sealed at startup, true single-pass rendering, execution rebuilt from untrusted
+invocations (a caller cannot forge an execution), runtime-limited options and an accuracy-labelled
+token budget (an estimate, not a tokenizer count). It is internal only and always runs through the
+existing LLM Gateway; public chat and SSE contracts remain unchanged. See
+`docs/checkpoints/checkpoint-2.6.md` for the acceptance status. Authentication, databases, RAG, agents,
+and a final chat UI remain intentionally absent.
 
 ## Prerequisites
 
@@ -112,3 +114,6 @@ downloaded automatically.
 
 AI-service architecture details are documented in
 [`docs/architecture/ai-service-architecture.md`](docs/architecture/ai-service-architecture.md).
+Prompt lifecycle and security are documented in
+[`docs/architecture/prompt-management.md`](docs/architecture/prompt-management.md) and
+[`docs/architecture/prompt-security.md`](docs/architecture/prompt-security.md).
