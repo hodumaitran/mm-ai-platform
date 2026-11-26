@@ -1,5 +1,5 @@
-import { ChatApp } from '../components/chat-app.tsx';
+import { AppShell } from '../components/app-shell.tsx';
 
 export default function Home() {
-  return <ChatApp />;
+  return <AppShell />;
 }

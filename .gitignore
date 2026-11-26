@@ -55,3 +55,6 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
+
+# Generated Prisma client (created by `prisma generate`)
+apps/api/src/generated/

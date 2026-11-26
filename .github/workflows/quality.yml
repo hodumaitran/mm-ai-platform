@@ -14,6 +14,23 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Unit tests never connect; the database tests run on Linux where a service container exists.
+      TEST_DATABASE_URL: postgresql://mm_ai:ci_password_only@127.0.0.1:5432/mm_ai_test
+      SESSION_SECRET: ci-only-session-secret-0123456789abcdef
+    services:
+      postgres:
+        # Service containers are Linux-only; on Windows this block is ignored by the matrix guard below.
+        image: ${{ matrix.os == 'ubuntu-latest' && 'pgvector/pgvector:pg17' || '' }}
+        env:
+          POSTGRES_USER: mm_ai
+          POSTGRES_PASSWORD: ci_password_only
+          POSTGRES_DB: mm_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mm_ai" --health-interval 5s --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@f53f5227a9e83886ab598c617f3c170fab62f0d3 # v6
@@ -24,7 +41,16 @@ jobs:
           node-version: 26.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:js
+      - name: Quality gate with database tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --filter @mm-ai/api exec prisma migrate deploy
+          pnpm check:js
+        env:
+          DATABASE_URL: postgresql://mm_ai:ci_password_only@127.0.0.1:5432/mm_ai_test
+      - name: Quality gate without database tests (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm check:js:nodb
 
   python:
     strategy:

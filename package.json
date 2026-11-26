@@ -20,7 +20,9 @@
     "check:js": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e && pnpm build",
     "check:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-python.ps1",
     "audit:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/audit-python.ps1",
-    "check": "pnpm check:js && pnpm check:python"
+    "check": "pnpm check:js && pnpm check:python",
+    "check:js:nodb": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "audit:js": "pnpm audit --audit-level=high"
   },
   "devDependencies": {
     "prettier": "3.10.1",
@@ -29,7 +31,8 @@
   },
   "pnpm": {
     "overrides": {
-      "lodash": "4.18.0"
+      "lodash": "4.18.0",
+      "effect": "3.22.5"
     }
   }
 }

@@ -7,6 +7,14 @@ export type Environment = {
   AI_SERVICE_CONNECT_TIMEOUT_MS: number;
   AI_SERVICE_REQUEST_TIMEOUT_MS: number;
   AI_SERVICE_MAX_RESPONSE_BYTES: number;
+  DATABASE_URL: string;
+  SESSION_SECRET: string;
+  SESSION_TTL_SECONDS: number;
+  SESSION_COOKIE_SECURE: boolean;
+  APP_ALLOWED_ORIGINS: string[];
+  LOGIN_MAX_FAILURES: number;
+  LOGIN_WINDOW_SECONDS: number;
+  GENERATION_STALE_SECONDS: number;
 };
 
 function parseNodeEnvironment(value: unknown): Environment['NODE_ENV'] {
@@ -62,6 +70,55 @@ function parseLoopbackOrigin(value: unknown): string {
   return url.origin;
 }
 
+function parseDatabaseUrl(value: unknown): string {
+  const raw = readString(value, '', 'DATABASE_URL');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('DATABASE_URL must be a valid PostgreSQL URL');
+  }
+  const loopback = ['127.0.0.1', '::1', '[::1]', 'localhost'].includes(url.hostname);
+  if (url.protocol !== 'postgresql:' || !loopback || url.pathname.length < 2) {
+    throw new Error('DATABASE_URL must be a loopback postgresql:// URL with a database name');
+  }
+  return raw;
+}
+
+function parseSessionSecret(value: unknown): string {
+  const secret = readString(value, '', 'SESSION_SECRET');
+  if (secret.length < 32) {
+    throw new Error('SESSION_SECRET must be at least 32 characters');
+  }
+  return secret;
+}
+
+function parseBoolean(value: unknown, fallback: boolean, name: string): boolean {
+  if (value === undefined) return fallback;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+function parseOrigins(value: unknown): string[] {
+  const raw = readString(
+    value,
+    'http://127.0.0.1:3000,http://localhost:3000',
+    'APP_ALLOWED_ORIGINS',
+  );
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => {
+      const url = new URL(item);
+      if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/') {
+        throw new Error('APP_ALLOWED_ORIGINS must contain origins only');
+      }
+      return url.origin;
+    });
+}
+
 function readString(value: unknown, fallback: string, name: string): string {
   if (value === undefined) {
     return fallback;
@@ -110,6 +167,37 @@ export function validateEnvironment(input: Record<string, unknown>): Environment
       'AI_SERVICE_MAX_RESPONSE_BYTES',
       1024,
       1048576,
+    ),
+    DATABASE_URL: parseDatabaseUrl(input.DATABASE_URL),
+    SESSION_SECRET: parseSessionSecret(input.SESSION_SECRET),
+    SESSION_TTL_SECONDS: parseInteger(
+      input.SESSION_TTL_SECONDS,
+      43200,
+      'SESSION_TTL_SECONDS',
+      60,
+      2592000,
+    ),
+    SESSION_COOKIE_SECURE: parseBoolean(
+      input.SESSION_COOKIE_SECURE,
+      nodeEnv === 'production',
+      'SESSION_COOKIE_SECURE',
+    ),
+    APP_ALLOWED_ORIGINS: parseOrigins(input.APP_ALLOWED_ORIGINS),
+    LOGIN_MAX_FAILURES: parseInteger(input.LOGIN_MAX_FAILURES, 5, 'LOGIN_MAX_FAILURES', 1, 100),
+    LOGIN_WINDOW_SECONDS: parseInteger(
+      input.LOGIN_WINDOW_SECONDS,
+      900,
+      'LOGIN_WINDOW_SECONDS',
+      1,
+      86400,
+    ),
+    // Must exceed the AI request deadline, so a live generation is never declared stale.
+    GENERATION_STALE_SECONDS: parseInteger(
+      input.GENERATION_STALE_SECONDS,
+      360,
+      'GENERATION_STALE_SECONDS',
+      10,
+      7200,
     ),
   };
 }

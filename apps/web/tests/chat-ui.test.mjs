@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { forwardChatRequest } from '../src/server/chat-proxy.ts';
 import {
   ChatError,
   failureFromCode,
   failureFromStatus,
-  streamChat,
+  streamReply,
 } from '../src/lib/chat-client.ts';
 import {
   MAX_MESSAGE_CHARACTERS,
-  buildRequestMessages,
-  conversationTitle,
+  messagesToTurns,
   normalizeTitle,
   validateDraft,
 } from '../src/lib/conversation.ts';
@@ -20,10 +18,7 @@ import { createSseParser } from '../src/lib/sse.ts';
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  delete process.env.API_BASE_URL;
 });
-
-const turn = (id, user, assistant, status = 'done') => ({ id, user, assistant, status });
 
 // --- SSE parser ---------------------------------------------------------------------------------
 
@@ -46,53 +41,12 @@ test('SSE parser skips malformed JSON and incomplete trailing frames', () => {
   assert.deepEqual(events, [{ event: 'y', data: { ok: true } }]);
 });
 
-// --- conversation limits ------------------------------------------------------------------------
+// --- input limits -------------------------------------------------------------------------------
 
 test('draft validation rejects empty and oversized messages', () => {
   assert.equal(validateDraft('   \n'), 'empty');
   assert.equal(validateDraft('x'.repeat(MAX_MESSAGE_CHARACTERS)), 'ok');
   assert.equal(validateDraft('x'.repeat(MAX_MESSAGE_CHARACTERS + 1)), 'too-long');
-});
-
-test('request messages keep alternation, newest whole turns and public limits', () => {
-  const previous = [turn('1', 'a', 'b'), turn('2', 'c', 'd'), turn('3', 'e', 'f', 'error')];
-  const { messages, omitted } = buildRequestMessages(previous, 'next');
-  assert.deepEqual(
-    messages.map((m) => m.role),
-    ['user', 'assistant', 'user', 'assistant', 'user'],
-  );
-  assert.equal(omitted, 0);
-  assert.equal(messages.at(-1).content, 'next');
-});
-
-test('old turns are dropped, never truncated, when the aggregate limit is reached', () => {
-  const big = 'x'.repeat(1000);
-  const previous = [turn('1', big, big), turn('2', big, big)];
-  const { messages, omitted } = buildRequestMessages(previous, 'hello');
-  assert.equal(omitted, 1);
-  assert.equal(messages.length, 3);
-  const total = messages.reduce((sum, m) => sum + m.content.length, 0);
-  assert.ok(total <= 3072);
-  assert.ok(messages.every((m) => m.content.length <= MAX_MESSAGE_CHARACTERS));
-});
-
-test('an over-long assistant reply is not sent as history and stops older turns too', () => {
-  const previous = [turn('1', 'a', 'b'), turn('2', 'c', 'y'.repeat(2049))];
-  const { messages, omitted } = buildRequestMessages(previous, 'q');
-  assert.equal(messages.length, 1);
-  assert.equal(omitted, 2);
-});
-
-test('history never exceeds 16 messages', () => {
-  const previous = Array.from({ length: 30 }, (_, i) => turn(String(i), 'u', 'a'));
-  const { messages } = buildRequestMessages(previous, 'last');
-  assert.ok(messages.length <= 16);
-  assert.equal(messages.length % 2, 1);
-});
-
-test('titles are single-line and bounded', () => {
-  assert.equal(conversationTitle('Xin  chào\nbạn'), 'Xin chào bạn');
-  assert.ok(conversationTitle('x'.repeat(100)).length <= 41);
 });
 
 test('rename normalizes whitespace, bounds length and rejects empty titles', () => {
@@ -155,37 +109,64 @@ function sse(frames, init) {
 }
 
 const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const CONVERSATION = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+const noSignal = () => new AbortController().signal;
+const regenerate = { kind: 'regenerate' };
 
-test('streamChat delivers real deltas in order and sends only public fields', async () => {
+test('streamReply sends only the new text and idempotency key, with CSRF, to the owned conversation', async () => {
   let sent;
   globalThis.fetch = async (url, init) => {
-    sent = { url, body: JSON.parse(init.body) };
+    sent = { url, init, body: JSON.parse(init.body) };
     return sse([
       frame('stream.started', { version: '1' }),
+      frame('conversation.state', { title: 'Tiêu đề', omitted_turns: 1 }),
+      frame('context.prepared', { history_turns_excluded: 2 }),
       frame('content.delta', { content: 'Xin ' }),
       frame('content.delta', { content: 'chào' }),
       frame('stream.completed', { finish_reason: 'stop' }),
     ]);
   };
   const deltas = [];
-  await streamChat([{ role: 'user', content: 'hi' }], new AbortController().signal, (d) =>
-    deltas.push(d),
+  const omitted = [];
+  const titles = [];
+  await streamReply(
+    CONVERSATION,
+    { kind: 'send', content: 'hi', clientRequestId: 'req-1' },
+    noSignal(),
+    {
+      onDelta: (d) => deltas.push(d),
+      onOmitted: (n) => omitted.push(n),
+      onState: ({ title }) => titles.push(title),
+    },
   );
   assert.deepEqual(deltas, ['Xin ', 'chào']);
-  assert.equal(sent.url, '/api/v1/chat/completions/stream');
-  assert.deepEqual(Object.keys(sent.body).sort(), [
-    'generation',
-    'messages',
-    'thinking',
-    'version',
-  ]);
-  assert.equal(sent.body.thinking.mode, 'disabled');
+  // API-side omission (1) and AI-side exclusion (2) are summed.
+  assert.deepEqual(omitted, [1, 3]);
+  assert.deepEqual(titles, ['Tiêu đề']);
+  assert.equal(sent.url, `/api/v1/conversations/${CONVERSATION}/messages`);
+  assert.equal(sent.init.credentials, 'same-origin');
+  assert.deepEqual(Object.keys(sent.body).sort(), ['clientRequestId', 'content']);
   assert.ok(!JSON.stringify(sent.body).includes('system'));
+  assert.ok('X-CSRF-Token' in sent.init.headers);
 });
 
-test('streamChat maps HTTP statuses and in-stream errors to failure kinds', async () => {
+test('streamReply regenerate posts without a body to the regenerate route', async () => {
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = { url, init };
+    return sse([frame('stream.completed', {})]);
+  };
+  await streamReply(CONVERSATION, regenerate, noSignal(), { onDelta: () => {} });
+  assert.equal(sent.url, `/api/v1/conversations/${CONVERSATION}/regenerate`);
+  assert.equal(sent.init.body, undefined);
+});
+
+test('streamReply maps HTTP statuses and in-stream errors to failure kinds', async () => {
   const cases = [
     [400, 'invalid'],
+    [401, 'unauthorized'],
+    [404, 'notfound'],
+    [409, 'conflict'],
     [413, 'invalid'],
     [422, 'context'],
     [429, 'capacity'],
@@ -196,7 +177,7 @@ test('streamChat maps HTTP statuses and in-stream errors to failure kinds', asyn
   for (const [status, kind] of cases) {
     globalThis.fetch = async () => new Response('{}', { status });
     await assert.rejects(
-      streamChat([], new AbortController().signal, () => {}),
+      streamReply(CONVERSATION, regenerate, noSignal(), { onDelta: () => {} }),
       (error) => error instanceof ChatError && error.failure.kind === kind,
     );
     assert.equal(failureFromStatus(status), kind);
@@ -211,27 +192,27 @@ test('streamChat maps HTTP statuses and in-stream errors to failure kinds', asyn
       frame('stream.error', { error: { code: 'REQUEST_DEADLINE_EXCEEDED', message: 'x' } }),
     ]);
   await assert.rejects(
-    streamChat([], new AbortController().signal, () => {}),
+    streamReply(CONVERSATION, regenerate, noSignal(), { onDelta: () => {} }),
     (error) => error.failure.kind === 'timeout',
   );
 });
 
-test('streamChat reports an interrupted stream and network failure', async () => {
+test('streamReply reports an interrupted stream and network failure', async () => {
   globalThis.fetch = async () => sse([frame('content.delta', { content: 'a' })]);
   await assert.rejects(
-    streamChat([], new AbortController().signal, () => {}),
+    streamReply(CONVERSATION, regenerate, noSignal(), { onDelta: () => {} }),
     (error) => error.failure.kind === 'interrupted',
   );
   globalThis.fetch = async () => {
     throw new TypeError('fetch failed');
   };
   await assert.rejects(
-    streamChat([], new AbortController().signal, () => {}),
+    streamReply(CONVERSATION, regenerate, noSignal(), { onDelta: () => {} }),
     (error) => error.failure.kind === 'network',
   );
 });
 
-test('aborting streamChat rejects with the abort and propagates to fetch', async () => {
+test('aborting streamReply rejects with the abort and propagates to fetch', async () => {
   const abort = new AbortController();
   let seen;
   globalThis.fetch = async (_url, init) => {
@@ -240,67 +221,67 @@ test('aborting streamChat rejects with the abort and propagates to fetch', async
       init.signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError'))),
     );
   };
-  const pending = streamChat([], abort.signal, () => {});
+  const pending = streamReply(CONVERSATION, regenerate, abort.signal, { onDelta: () => {} });
   abort.abort();
   await assert.rejects(pending, (error) => error.name === 'AbortError');
   assert.equal(seen.aborted, true);
 });
 
-// --- proxy status passthrough --------------------------------------------------------------------
-
-test('stream proxy preserves safe upstream failure categories without forwarding bodies', async () => {
-  process.env.API_BASE_URL = 'http://127.0.0.1:3001/api/v1';
-  for (const status of [422, 429, 503, 504]) {
-    globalThis.fetch = async () => Response.json({ error: 'secret upstream detail' }, { status });
-    const request = new Request('http://127.0.0.1:3000/api/v1/chat/completions/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
-    });
-    const response = await forwardChatRequest(request, true);
-    assert.equal(response.status, status);
-    assert.ok(!(await response.text()).includes('secret'));
-  }
-  globalThis.fetch = async () => Response.json({}, { status: 500 });
-  const request = new Request('http://127.0.0.1:3000/api/v1/chat/completions/stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
-  });
-  assert.equal((await forwardChatRequest(request, true)).status, 502);
-});
-
-test('streamChat reports server-side history exclusion from context.prepared', async () => {
+test('streamReply ignores malformed omitted counts instead of trusting them', async () => {
   globalThis.fetch = async () =>
     sse([
-      frame('stream.started', {}),
-      frame('context.prepared', { history_turns_included: 1, history_turns_excluded: 2 }),
-      frame('content.delta', { content: 'ok' }),
-      frame('stream.completed', { finish_reason: 'stop' }),
-    ]);
-  const seen = [];
-  const deltas = [];
-  await streamChat(
-    [{ role: 'user', content: 'hi' }],
-    new AbortController().signal,
-    (d) => deltas.push(d),
-    (info) => seen.push(info),
-  );
-  assert.deepEqual(seen, [{ excludedTurns: 2 }]);
-  assert.deepEqual(deltas, ['ok']);
-  // Malformed values are ignored rather than trusted.
-  globalThis.fetch = async () =>
-    sse([
-      frame('context.prepared', { history_turns_excluded: -1 }),
+      frame('conversation.state', { omitted_turns: -1 }),
       frame('context.prepared', { history_turns_excluded: 'x' }),
       frame('stream.completed', {}),
     ]);
-  const ignored = [];
-  await streamChat(
-    [],
-    new AbortController().signal,
-    () => {},
-    (info) => ignored.push(info),
+  const seen = [];
+  await streamReply(CONVERSATION, regenerate, noSignal(), {
+    onDelta: () => {},
+    onOmitted: (n) => seen.push(n),
+  });
+  assert.deepEqual(seen, []);
+});
+
+// --- restoring persisted conversations --------------------------------------------------------
+
+const stored = (seq, role, content, status = 'COMPLETED', errorCode = null) => ({
+  id: `m${seq}`,
+  seq,
+  role,
+  content,
+  status,
+  errorCode,
+});
+
+test('persisted messages are restored as turns in order with accurate states', () => {
+  const turns = messagesToTurns([
+    stored(1, 'USER', 'một'),
+    stored(2, 'ASSISTANT', 'trả lời một'),
+    stored(3, 'USER', 'hai'),
+    stored(4, 'ASSISTANT', 'dở dang', 'STOPPED'),
+    stored(5, 'USER', 'ba'),
+    stored(6, 'ASSISTANT', '', 'FAILED', 'UPSTREAM_HTTP_503'),
+    stored(7, 'USER', 'bốn'),
+    stored(8, 'ASSISTANT', 'một phần', 'INTERRUPTED', 'SERVER_RESTART'),
+    stored(9, 'USER', 'năm'),
+    stored(10, 'ASSISTANT', '', 'FAILED', 'MODEL_UNAVAILABLE'),
+  ]);
+  assert.deepEqual(
+    turns.map((t) => [t.user, t.status, t.error?.kind]),
+    [
+      ['một', 'done', undefined],
+      ['hai', 'stopped', undefined],
+      ['ba', 'error', 'unavailable'],
+      ['bốn', 'error', 'interrupted'],
+      ['năm', 'error', 'unavailable'],
+    ],
   );
-  assert.deepEqual(ignored, []);
+  assert.equal(turns[1].assistant, 'dở dang');
+  assert.ok(turns.every((t) => t.clientRequestId === undefined));
+});
+
+test('a user message without an assistant reply is shown as interrupted, not dropped', () => {
+  const turns = messagesToTurns([stored(1, 'USER', 'lẻ')]);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].error.kind, 'interrupted');
 });

@@ -1,4 +1,5 @@
-import type { ChatFailure, ChatFailureKind, WireMessage } from './conversation.ts';
+import { handleUnauthorized, requestHeaders } from './api.ts';
+import type { ChatFailure, ChatFailureKind } from './conversation.ts';
 import { createSseParser } from './sse.ts';
 
 export class ChatError extends Error {
@@ -9,10 +10,11 @@ export class ChatError extends Error {
   }
 }
 
-const GENERATION = { temperature: 0.3, max_output_tokens: 512 } as const;
-
 export function failureFromStatus(status: number): ChatFailureKind {
   if (status === 400 || status === 413 || status === 415) return 'invalid';
+  if (status === 401) return 'unauthorized';
+  if (status === 404) return 'notfound';
+  if (status === 409) return 'conflict';
   if (status === 422) return 'context';
   if (status === 429) return 'capacity';
   if (status === 503) return 'unavailable';
@@ -47,24 +49,41 @@ export function failureFromCode(code: unknown): ChatFailureKind {
   }
 }
 
-/** Stream one assistant reply from the same-origin route. Abort through `signal` to stop it. */
-export async function streamChat(
-  messages: readonly WireMessage[],
+export type GenerationRequest =
+  { kind: 'send'; content: string; clientRequestId: string } | { kind: 'regenerate' };
+
+export type StreamHandlers = {
+  onDelta: (text: string) => void;
+  /** Number of earlier turns the server left out of the model context. */
+  onOmitted?: (omittedTurns: number) => void;
+  onState?: (state: { title: string }) => void;
+};
+
+/**
+ * Stream one assistant reply for a conversation. The server persists the user message and the
+ * answer; the browser only sends the new text (history is read from the database server-side).
+ * Abort through `signal` to stop it: the partial answer is kept.
+ */
+export async function streamReply(
+  conversationId: string,
+  request: GenerationRequest,
   signal: AbortSignal,
-  onDelta: (text: string) => void,
-  onContext?: (info: { excludedTurns: number }) => void,
+  handlers: StreamHandlers,
 ): Promise<void> {
+  const base = `/api/v1/conversations/${encodeURIComponent(conversationId)}`;
+  const send = request.kind === 'send';
   let response: Response;
   try {
-    response = await fetch('/api/v1/chat/completions/stream', {
+    response = await fetch(send ? `${base}/messages` : `${base}/regenerate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({
-        version: '1',
-        messages,
-        generation: GENERATION,
-        thinking: { mode: 'disabled' },
-      }),
+      headers: {
+        ...requestHeaders('POST', send),
+        Accept: 'text/event-stream',
+      },
+      body: send
+        ? JSON.stringify({ content: request.content, clientRequestId: request.clientRequestId })
+        : undefined,
+      credentials: 'same-origin',
       cache: 'no-store',
       signal,
     });
@@ -74,12 +93,16 @@ export async function streamChat(
   }
   if (!response.ok) {
     void response.body?.cancel();
+    if (response.status === 401) handleUnauthorized();
     throw new ChatError(failureFromStatus(response.status));
   }
   if (response.body === null) throw new ChatError('server');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let terminal = false;
+  // History left out by the API (public limits) plus history the AI service had to drop (budget).
+  let omittedByApi = 0;
+  let excludedByAi = 0;
   let failure: ChatError | null = null;
   const parse = createSseParser(({ event, data }) => {
     const payload = (typeof data === 'object' && data !== null ? data : {}) as Record<
@@ -87,11 +110,19 @@ export async function streamChat(
       unknown
     >;
     if (event === 'content.delta' && typeof payload.content === 'string') {
-      onDelta(payload.content);
+      handlers.onDelta(payload.content);
+    } else if (event === 'conversation.state') {
+      if (typeof payload.title === 'string') handlers.onState?.({ title: payload.title });
+      const omitted = payload.omitted_turns;
+      if (typeof omitted === 'number' && Number.isInteger(omitted) && omitted >= 0) {
+        omittedByApi = omitted;
+        handlers.onOmitted?.(omittedByApi + excludedByAi);
+      }
     } else if (event === 'context.prepared') {
       const excluded = payload.history_turns_excluded;
       if (typeof excluded === 'number' && Number.isInteger(excluded) && excluded >= 0) {
-        onContext?.({ excludedTurns: excluded });
+        excludedByAi = excluded;
+        handlers.onOmitted?.(omittedByApi + excludedByAi);
       }
     } else if (event === 'stream.completed') {
       terminal = true;

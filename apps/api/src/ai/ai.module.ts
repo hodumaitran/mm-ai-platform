@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiServiceClient } from './ai-service.client';
-import { ChatController } from './chat.controller';
 
-@Module({
-  controllers: [ChatController],
-  providers: [AiServiceClient],
-})
+/** Private AI service client. No controller is exposed: chat is reachable only through the authenticated conversations API. */
+@Module({ providers: [AiServiceClient], exports: [AiServiceClient] })
 export class AiModule {}

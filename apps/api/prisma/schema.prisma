@@ -1,0 +1,96 @@
+// MM AI Platform: PostgreSQL schema (MVP-02).
+// pgvector: the database image ships the extension, but nothing here enables or uses it yet.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum MessageStatus {
+  GENERATING
+  COMPLETED
+  STOPPED
+  FAILED
+  INTERRUPTED
+}
+
+model User {
+  id            String         @id @default(uuid(7)) @db.Uuid
+  email         String         @unique
+  displayName   String
+  passwordHash  String
+  role          Role           @default(USER)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
+  lastLoginAt   DateTime?      @db.Timestamptz(3)
+  sessions      Session[]
+  conversations Conversation[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @db.Uuid
+  // SHA-256 of the opaque token; the token itself is never stored.
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  lastSeenAt DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Conversation {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @db.Uuid
+  title     String
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+  @@map("conversations")
+}
+
+model Message {
+  id                  String        @id @default(uuid(7)) @db.Uuid
+  conversationId      String        @db.Uuid
+  // Per-conversation position, assigned under a conversation row lock: deterministic ordering.
+  seq                 Int
+  role                MessageRole
+  content             String
+  status              MessageStatus @default(COMPLETED)
+  errorCode           String?
+  // Idempotency key supplied by the browser for USER messages (retry must not duplicate a turn).
+  clientRequestId     String?       @db.Uuid
+  generationStartedAt DateTime?     @db.Timestamptz(3)
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime      @default(now()) @db.Timestamptz(3)
+  conversation        Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, seq])
+  @@unique([conversationId, clientRequestId])
+  @@index([status, generationStartedAt])
+  @@map("messages")
+}

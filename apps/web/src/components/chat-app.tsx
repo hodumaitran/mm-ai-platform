@@ -1,18 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ChatError, streamChat } from '../lib/chat-client.ts';
+import { apiJson } from '../lib/api.ts';
+import { ChatError, streamReply, type GenerationRequest } from '../lib/chat-client.ts';
 import {
   MAX_MESSAGE_CHARACTERS,
   MAX_TITLE_CHARACTERS,
-  buildRequestMessages,
-  conversationTitle,
+  messagesToTurns,
   normalizeTitle,
   validateDraft,
   type ChatFailure,
-  type Conversation,
+  type ConversationSummary,
+  type ServerMessage,
   type Turn,
 } from '../lib/conversation.ts';
+import { AdminPanel } from './admin-panel.tsx';
+import type { SessionUser } from './login-form.tsx';
 import { CopyButton, Markdown } from './markdown.tsx';
 
 const FAILURE_TEXT: Record<ChatFailure['kind'], string> = {
@@ -24,39 +27,63 @@ const FAILURE_TEXT: Record<ChatFailure['kind'], string> = {
   timeout: 'Yêu cầu vượt quá thời gian chờ. Vui lòng thử lại.',
   network: 'Không thể kết nối tới máy chủ. Hãy kiểm tra kết nối và thử lại.',
   server: 'Đã xảy ra lỗi khi xử lý yêu cầu. Vui lòng thử lại.',
-  interrupted: 'Kết nối bị gián đoạn khi đang tạo câu trả lời.',
+  interrupted: 'Câu trả lời bị gián đoạn trước khi hoàn tất.',
+  conflict: 'Cuộc trò chuyện này đang tạo một câu trả lời khác. Hãy đợi hoặc dừng nó rồi thử lại.',
+  notfound: 'Không tìm thấy cuộc trò chuyện này.',
+  unauthorized: 'Phiên đăng nhập đã hết hạn.',
 };
 
 // After this long without any output the model is most likely being loaded into memory.
 const SLOW_START_MS = 8000;
+const PAGE_SIZE = 30;
 
-let nextId = 0;
-const newId = (prefix: string): string => `${prefix}-${(nextId += 1)}`;
+function readHashId(): string | null {
+  const match = /^#c=([0-9a-fA-F-]{36})$/.exec(window.location.hash);
+  return match?.[1] ?? null;
+}
 
-export function ChatApp() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+function writeHashId(id: string | null): void {
+  const next = id === null ? window.location.pathname : `${window.location.pathname}#c=${id}`;
+  window.history.replaceState(null, '', next);
+}
+
+export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+  const [list, setList] = useState<ConversationSummary[]>([]);
+  const [listTotal, setListTotal] = useState(0);
+  const [listPage, setListPage] = useState(1);
+  const [listState, setListState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turnsState, setTurnsState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [draft, setDraft] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
   // Synchronous guard: React state is stale between two events in the same tick, a ref is not.
   const busy = useRef(false);
   const composing = useRef(false);
+  const activeRef = useRef<string | null>(null);
+  const queryRef = useRef('');
   const scroller = useRef<HTMLDivElement | null>(null);
   const stick = useRef(true);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
 
-  const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
+  const activeSummary = list.find((item) => item.id === activeId) ?? null;
   const validity = validateDraft(draft);
+  const lastTurnId = turns.at(-1)?.id ?? null;
 
   useEffect(() => {
     const element = scroller.current;
     if (element !== null && stick.current) element.scrollTop = element.scrollHeight;
-  }, [conversations, activeId]);
+  }, [turns, activeId]);
 
   useEffect(() => {
     const element = textarea.current;
@@ -65,18 +92,81 @@ export function ChatApp() {
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }, [draft]);
 
+  const loadList = useCallback(
+    async (text: string, page: number, append: boolean): Promise<void> => {
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+        if (text.trim() !== '') params.set('q', text.trim());
+        const result = await apiJson<{ items: ConversationSummary[]; total: number }>(
+          'GET',
+          `/conversations?${params.toString()}`,
+        );
+        if (queryRef.current !== text) return;
+        setList((current) => (append ? [...current, ...result.items] : result.items));
+        setListTotal(result.total);
+        setListPage(page);
+        setListState('ready');
+      } catch {
+        if (queryRef.current === text) setListState('error');
+      }
+    },
+    [],
+  );
+
+  const refreshList = useCallback((): void => {
+    void loadList(queryRef.current, 1, false);
+  }, [loadList]);
+
+  // Debounced title search (server-side, scoped to the signed-in user).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      queryRef.current = search;
+      setQuery(search);
+      setListState('loading');
+      void loadList(search, 1, false);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search, loadList]);
+
+  const openConversation = useCallback(async (id: string): Promise<void> => {
+    controller.current?.abort();
+    activeRef.current = id;
+    setActiveId(id);
+    writeHashId(id);
+    setTurns([]);
+    setTurnsState('loading');
+    setBanner(null);
+    stick.current = true;
+    try {
+      const result = await apiJson<{ messages: ServerMessage[] }>(
+        'GET',
+        `/conversations/${id}/messages`,
+      );
+      if (activeRef.current !== id) return;
+      setTurns(messagesToTurns(result.messages));
+      setTurnsState('idle');
+    } catch {
+      if (activeRef.current !== id) return;
+      activeRef.current = null;
+      setActiveId(null);
+      writeHashId(null);
+      setTurnsState('idle');
+      setBanner('Không mở được cuộc trò chuyện này.');
+    }
+  }, []);
+
+  // Restore the conversation that was open before a page refresh.
+  useEffect(() => {
+    const id = readHashId();
+    if (id === null) return;
+    const timer = setTimeout(() => void openConversation(id), 0);
+    return () => clearTimeout(timer);
+  }, [openConversation]);
+
   const updateTurn = useCallback(
     (conversationId: string, turnId: string, change: (turn: Turn) => Turn): void => {
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id !== conversationId
-            ? conversation
-            : {
-                ...conversation,
-                turns: conversation.turns.map((turn) => (turn.id === turnId ? change(turn) : turn)),
-              },
-        ),
-      );
+      if (activeRef.current !== conversationId) return;
+      setTurns((current) => current.map((turn) => (turn.id === turnId ? change(turn) : turn)));
     },
     [],
   );
@@ -87,41 +177,41 @@ export function ChatApp() {
 
   /** The caller must already hold `busy`; it is released when the generation settles. */
   const generate = useCallback(
-    async (conversationId: string, previous: Turn[], text: string): Promise<void> => {
-      const turnId = newId('turn');
-      const { messages, omitted } = buildRequestMessages(previous, text);
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? {
-                ...conversation,
-                turns: [
-                  ...previous,
-                  { id: turnId, user: text, assistant: '', status: 'streaming', omitted },
-                ],
-              }
-            : conversation,
-        ),
-      );
+    async (
+      conversationId: string,
+      previous: Turn[],
+      userText: string,
+      request: GenerationRequest,
+    ): Promise<void> => {
+      const turnId = `turn-${crypto.randomUUID()}`;
+      setTurns([
+        ...previous,
+        {
+          id: turnId,
+          user: userText,
+          assistant: '',
+          status: 'streaming',
+          clientRequestId: request.kind === 'send' ? request.clientRequestId : undefined,
+        },
+      ]);
       stick.current = true;
       const abort = new AbortController();
       controller.current = abort;
       setGenerating(true);
       try {
-        await streamChat(
-          messages,
-          abort.signal,
-          (delta) =>
+        await streamReply(conversationId, request, abort.signal, {
+          onDelta: (delta) =>
             updateTurn(conversationId, turnId, (turn) => ({
               ...turn,
               assistant: turn.assistant + delta,
             })),
-          ({ excludedTurns }) =>
-            updateTurn(conversationId, turnId, (turn) => ({
-              ...turn,
-              omitted: omitted + excludedTurns,
-            })),
-        );
+          onOmitted: (omitted) =>
+            updateTurn(conversationId, turnId, (turn) => ({ ...turn, omitted })),
+          onState: ({ title }) =>
+            setList((current) =>
+              current.map((item) => (item.id === conversationId ? { ...item, title } : item)),
+            ),
+        });
         updateTurn(conversationId, turnId, (turn) => ({ ...turn, status: 'done' }));
       } catch (error) {
         if (abort.signal.aborted) {
@@ -138,45 +228,69 @@ export function ChatApp() {
         if (controller.current === abort) controller.current = null;
         busy.current = false;
         setGenerating(false);
+        refreshList();
       }
     },
-    [updateTurn],
+    [refreshList, updateTurn],
   );
 
-  const send = useCallback((): void => {
+  const send = useCallback(async (): Promise<void> => {
     if (busy.current || validateDraft(draft) !== 'ok') return;
     busy.current = true;
     const text = draft;
     setDraft('');
-    if (active === null) {
-      const id = newId('conversation');
-      setConversations((current) => [
-        { id, title: conversationTitle(text), turns: [] },
-        ...current,
-      ]);
-      setActiveId(id);
-      void generate(id, [], text);
-    } else {
-      void generate(active.id, active.turns, text);
+    let conversationId = activeRef.current;
+    let previous = turns;
+    if (conversationId === null) {
+      try {
+        const created = await apiJson<ConversationSummary>('POST', '/conversations', { body: {} });
+        conversationId = created.id;
+        activeRef.current = created.id;
+        setActiveId(created.id);
+        writeHashId(created.id);
+        setList((current) => [created, ...current]);
+        previous = [];
+      } catch {
+        busy.current = false;
+        setDraft(text);
+        setBanner('Không tạo được cuộc trò chuyện. Vui lòng thử lại.');
+        return;
+      }
     }
-  }, [active, draft, generate]);
+    setBanner(null);
+    await generate(conversationId, previous, text, {
+      kind: 'send',
+      content: text,
+      clientRequestId: crypto.randomUUID(),
+    });
+  }, [draft, generate, turns]);
 
-  /** Replace the latest turn: retry after a failure or regenerate its answer. No duplicate turn. */
+  /** Retry after a failure or regenerate the answer: only for the latest turn, no duplicate turn. */
   const rerun = useCallback(
     (turn: Turn): void => {
-      if (busy.current || active === null) return;
-      const last = active.turns.at(-1);
-      if (last === undefined || last.id !== turn.id) return;
+      const conversationId = activeRef.current;
+      if (busy.current || conversationId === null || turn.id !== lastTurnId) return;
       busy.current = true;
-      void generate(active.id, active.turns.slice(0, -1), turn.user);
+      const previous = turns.slice(0, -1);
+      // An in-session submission keeps its idempotency key (the server may not have stored it yet);
+      // a restored or completed turn already exists server-side and is regenerated in place.
+      const request: GenerationRequest =
+        turn.status === 'error' && turn.clientRequestId !== undefined
+          ? { kind: 'send', content: turn.user, clientRequestId: turn.clientRequestId }
+          : { kind: 'regenerate' };
+      void generate(conversationId, previous, turn.user, request);
     },
-    [active, generate],
+    [generate, lastTurnId, turns],
   );
 
   const newConversation = (): void => {
     stop();
+    activeRef.current = null;
     setActiveId(null);
+    writeHashId(null);
+    setTurns([]);
     setDraft('');
+    setBanner(null);
     setRenaming(null);
     setConfirmingDelete(null);
     setDrawer(false);
@@ -185,34 +299,45 @@ export function ChatApp() {
   };
 
   const select = (id: string): void => {
-    if (id !== activeId) stop();
-    setActiveId(id);
+    if (id === activeRef.current) {
+      setDrawer(false);
+      return;
+    }
     setRenaming(null);
     setConfirmingDelete(null);
     setDrawer(false);
-    stick.current = true;
+    void openConversation(id);
   };
 
-  const remove = (id: string): void => {
-    if (id === activeId) {
-      stop();
-      setActiveId(null);
-    }
+  const remove = async (id: string): Promise<void> => {
     setConfirmingDelete(null);
-    setConversations((current) => current.filter((conversation) => conversation.id !== id));
+    if (id === activeRef.current) newConversation();
+    try {
+      await apiJson('DELETE', `/conversations/${id}`);
+      setList((current) => current.filter((item) => item.id !== id));
+      setListTotal((total) => Math.max(0, total - 1));
+    } catch {
+      setBanner('Không xóa được cuộc trò chuyện.');
+      refreshList();
+    }
   };
 
-  const commitRename = (): void => {
+  const commitRename = async (): Promise<void> => {
     if (renaming === null) return;
+    const { id } = renaming;
     const title = normalizeTitle(renaming.value);
-    if (title !== null) {
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === renaming.id ? { ...conversation, title } : conversation,
-        ),
-      );
-    }
     setRenaming(null);
+    if (title === null) return;
+    try {
+      const updated = await apiJson<ConversationSummary>('PATCH', `/conversations/${id}`, {
+        body: { title },
+      });
+      setList((current) =>
+        current.map((item) => (item.id === id ? { ...item, title: updated.title } : item)),
+      );
+    } catch {
+      setBanner('Không đổi được tên cuộc trò chuyện.');
+    }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -222,10 +347,8 @@ export function ChatApp() {
       return;
     }
     event.preventDefault();
-    send();
+    void send();
   };
-
-  const lastTurnId = active?.turns.at(-1)?.id ?? null;
 
   return (
     <div className="flex h-dvh bg-white text-slate-900">
@@ -256,7 +379,7 @@ export function ChatApp() {
             Thu gọn
           </button>
         </div>
-        <div className="px-3 pb-2">
+        <div className="space-y-2 px-3 pb-2">
           <button
             type="button"
             onClick={newConversation}
@@ -264,38 +387,60 @@ export function ChatApp() {
           >
             + Cuộc trò chuyện mới
           </button>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            maxLength={80}
+            aria-label="Tìm theo tiêu đề"
+            placeholder="Tìm theo tiêu đề…"
+            className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-slate-500"
+          />
         </div>
         <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {conversations.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-slate-500">Chưa có cuộc trò chuyện nào.</p>
+          {listState === 'loading' && list.length === 0 ? (
+            <p role="status" className="px-2 py-3 text-xs text-slate-500">
+              Đang tải…
+            </p>
+          ) : listState === 'error' ? (
+            <p role="alert" className="px-2 py-3 text-xs text-red-700">
+              Không tải được danh sách.{' '}
+              <button type="button" onClick={refreshList} className="underline">
+                Thử lại
+              </button>
+            </p>
+          ) : list.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-slate-500">
+              {query.trim() !== ''
+                ? 'Không có cuộc trò chuyện nào khớp.'
+                : 'Chưa có cuộc trò chuyện nào.'}
+            </p>
           ) : (
             <ul className="space-y-0.5">
-              {conversations.map((conversation) => (
-                <li key={conversation.id} className="group flex items-center">
-                  {renaming?.id === conversation.id ? (
+              {list.map((item) => (
+                <li key={item.id} className="group flex items-center">
+                  {renaming?.id === item.id ? (
                     <input
                       autoFocus
                       value={renaming.value}
                       maxLength={MAX_TITLE_CHARACTERS}
                       aria-label="Tên cuộc trò chuyện"
-                      onChange={(event) =>
-                        setRenaming({ id: conversation.id, value: event.target.value })
-                      }
+                      onChange={(event) => setRenaming({ id: item.id, value: event.target.value })}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
                           event.preventDefault();
-                          commitRename();
+                          void commitRename();
                         } else if (event.key === 'Escape') {
                           setRenaming(null);
                         }
                       }}
-                      onBlur={commitRename}
+                      onBlur={() => void commitRename()}
                       className="min-w-0 flex-1 rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm outline-none"
                     />
-                  ) : confirmingDelete === conversation.id ? (
+                  ) : confirmingDelete === item.id ? (
                     <div
                       role="alertdialog"
-                      aria-label={`Xác nhận xóa ${conversation.title}`}
+                      aria-label={`Xác nhận xóa ${item.title}`}
                       className="flex min-w-0 flex-1 items-center gap-1 rounded-md bg-red-50 px-3 py-1.5 text-sm"
                     >
                       <span className="min-w-0 flex-1 truncate text-red-800">
@@ -304,7 +449,7 @@ export function ChatApp() {
                       <button
                         type="button"
                         autoFocus
-                        onClick={() => remove(conversation.id)}
+                        onClick={() => void remove(item.id)}
                         className="rounded px-2 py-0.5 text-xs font-medium text-red-800 hover:bg-red-100"
                       >
                         Xóa
@@ -321,23 +466,21 @@ export function ChatApp() {
                     <>
                       <button
                         type="button"
-                        onClick={() => select(conversation.id)}
-                        aria-current={conversation.id === activeId ? 'true' : undefined}
+                        onClick={() => select(item.id)}
+                        aria-current={item.id === activeId ? 'true' : undefined}
                         className={`min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-sm ${
-                          conversation.id === activeId
-                            ? 'bg-slate-200 font-medium'
-                            : 'hover:bg-slate-100'
+                          item.id === activeId ? 'bg-slate-200 font-medium' : 'hover:bg-slate-100'
                         }`}
                       >
-                        {conversation.title}
+                        {item.title}
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           setConfirmingDelete(null);
-                          setRenaming({ id: conversation.id, value: conversation.title });
+                          setRenaming({ id: item.id, value: item.title });
                         }}
-                        aria-label={`Đổi tên cuộc trò chuyện ${conversation.title}`}
+                        aria-label={`Đổi tên cuộc trò chuyện ${item.title}`}
                         className="ml-1 rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-900 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                       >
                         Đổi tên
@@ -346,9 +489,9 @@ export function ChatApp() {
                         type="button"
                         onClick={() => {
                           setRenaming(null);
-                          setConfirmingDelete(conversation.id);
+                          setConfirmingDelete(item.id);
                         }}
-                        aria-label={`Xóa cuộc trò chuyện ${conversation.title}`}
+                        aria-label={`Xóa cuộc trò chuyện ${item.title}`}
                         className="rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-900 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                       >
                         Xóa
@@ -359,10 +502,62 @@ export function ChatApp() {
               ))}
             </ul>
           )}
+          {list.length < listTotal && (
+            <button
+              type="button"
+              onClick={() => void loadList(queryRef.current, listPage + 1, true)}
+              className="mt-1 w-full rounded px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-200"
+            >
+              Tải thêm
+            </button>
+          )}
         </nav>
-        <p className="border-t border-slate-200 px-4 py-3 text-xs leading-5 text-slate-500">
-          Hội thoại chỉ lưu trong bộ nhớ trình duyệt và sẽ mất khi tải lại trang.
-        </p>
+        <div className="relative border-t border-slate-200 px-3 py-2">
+          {menu && (
+            <div
+              role="menu"
+              className="absolute right-3 bottom-14 left-3 rounded-md border border-slate-200 bg-white p-1 shadow-md"
+            >
+              <p className="truncate px-3 py-1.5 text-xs text-slate-500">{user.email}</p>
+              {user.role === 'ADMIN' && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenu(false);
+                    setAdmin(true);
+                  }}
+                  className="w-full rounded px-3 py-1.5 text-left text-sm hover:bg-slate-100"
+                >
+                  Quản lý người dùng
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onLogout}
+                className="w-full rounded px-3 py-1.5 text-left text-sm hover:bg-slate-100"
+              >
+                Đăng xuất
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            onClick={() => setMenu(!menu)}
+            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-200"
+          >
+            <span className="min-w-0 truncate font-medium">{user.displayName}</span>
+            <span className="ml-2 text-xs text-slate-500">
+              {user.role === 'ADMIN' ? 'Quản trị' : 'Nhân viên'}
+            </span>
+          </button>
+          <p className="px-2 pt-1 text-xs leading-5 text-slate-500">
+            Hội thoại được lưu trên máy chủ nội bộ và chỉ bạn xem được.
+          </p>
+        </div>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -380,7 +575,7 @@ export function ChatApp() {
             Danh sách
           </button>
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
-            {active?.title ?? 'Cuộc trò chuyện mới'}
+            {activeSummary?.title ?? 'Cuộc trò chuyện mới'}
           </h1>
           <span className="hidden text-xs text-slate-500 sm:inline">Mô hình cục bộ · MM AI</span>
         </header>
@@ -394,14 +589,18 @@ export function ChatApp() {
           className="min-h-0 flex-1 overflow-y-auto"
         >
           <div className="mx-auto w-full max-w-3xl px-4 py-6">
-            {active === null || active.turns.length === 0 ? (
+            {turnsState === 'loading' ? (
+              <p role="status" className="py-20 text-center text-sm text-slate-500">
+                Đang tải cuộc trò chuyện…
+              </p>
+            ) : turns.length === 0 ? (
               <div className="py-20 text-center">
                 <h2 className="text-2xl font-semibold">MM AI</h2>
                 <p className="mt-2 text-slate-500">Bạn muốn hỏi điều gì hôm nay?</p>
               </div>
             ) : (
               <ol className="space-y-8">
-                {active.turns.map((turn) => (
+                {turns.map((turn) => (
                   <li key={turn.id} className="space-y-4">
                     <div className="flex justify-end">
                       <p className="max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
@@ -422,6 +621,11 @@ export function ChatApp() {
 
         <div className="border-t border-slate-200 bg-white px-4 pt-3 pb-3">
           <div className="mx-auto w-full max-w-3xl">
+            {banner !== null && (
+              <p role="alert" className="mb-2 text-xs text-red-700">
+                {banner}
+              </p>
+            )}
             <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 focus-within:border-slate-500">
               <textarea
                 ref={textarea}
@@ -451,7 +655,7 @@ export function ChatApp() {
               ) : (
                 <button
                   type="button"
-                  onClick={send}
+                  onClick={() => void send()}
                   disabled={validity !== 'ok'}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
@@ -472,6 +676,7 @@ export function ChatApp() {
           </div>
         </div>
       </main>
+      {admin && <AdminPanel currentUserId={user.id} onClose={() => setAdmin(false)} />}
     </div>
   );
 }
