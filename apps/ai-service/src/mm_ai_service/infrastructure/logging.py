@@ -35,7 +35,9 @@ SAFE_METADATA_KEYS = frozenset(
         "status_code",
         "time_to_first_content_ms",
         "timeout_category",
+        "tool_calls",
         "tool_name",
+        "tool_rounds",
     }
 )
 

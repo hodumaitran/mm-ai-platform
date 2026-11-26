@@ -317,3 +317,36 @@ def test_live_gateway_concurrency_limit_one() -> None:
         await provider.stop()
 
     asyncio.run(exercise())
+
+
+def test_live_native_tool_call_is_parsed_validated_and_executed() -> None:
+    _require_model()
+
+    async def exercise() -> None:
+        from mm_ai_service.application.demo_tools import CALCULATE, build_demo_registry
+        from mm_ai_service.application.tools import ToolExecutionPolicy, ToolExecutor
+        from mm_ai_service.domain.tools import ToolOutcome
+
+        provider = _provider()
+        await provider.start()
+        assert provider.capabilities.tool_calling is True
+        gateway = _gateway(provider)
+        request = CompletionRequest(
+            MODEL,
+            (ChatMessage(MessageRole.USER, "Use the calculate tool to multiply 6 by 7."),),
+            GenerationOptions(temperature=0.0, max_output_tokens=200, context_window=4096),
+            ThinkingConfiguration(ThinkingMode.DISABLED),
+            tools=(CALCULATE,),
+        )
+        response = await gateway.complete(request, timeout_seconds=280)
+        assert response.finish_reason is FinishReason.TOOL_CALL
+        (call,) = response.message.tool_calls
+        assert call.tool_name == "calculate"
+        registry = build_demo_registry()
+        executor = ToolExecutor(registry, ToolExecutionPolicy(allowed_tools=registry.names))
+        execution = await executor.execute(call, timeout_seconds=10)
+        assert execution.result.outcome is ToolOutcome.SUCCEEDED
+        assert '"result":42' in execution.result.content
+        await provider.stop()
+
+    asyncio.run(exercise())

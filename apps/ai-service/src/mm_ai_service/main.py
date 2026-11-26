@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from fastapi import FastAPI
 
 from mm_ai_service.application.context import ContextService
+from mm_ai_service.application.demo_tools import build_demo_registry
 from mm_ai_service.application.gateway import GatewayPolicy, LLMGateway
 from mm_ai_service.application.lifecycle import ManagedResource
 from mm_ai_service.application.observability import EventLogger
@@ -15,6 +16,8 @@ from mm_ai_service.application.prompts import PromptService
 from mm_ai_service.application.providers import LLMProvider
 from mm_ai_service.application.readiness import ReadinessProbe
 from mm_ai_service.application.registry import ProviderRegistry
+from mm_ai_service.application.tool_orchestration import ToolCallingOrchestrator
+from mm_ai_service.application.tools import ToolExecutionPolicy, ToolExecutor
 from mm_ai_service.config import Settings, load_settings
 from mm_ai_service.domain.llm import GenerationOptions
 from mm_ai_service.infrastructure.lifecycle import application_lifespan
@@ -84,6 +87,17 @@ def create_app(
     )
 
     context_service = ContextService(prompt_service, logger=resolved_logger)
+    # Internal-only tool calling: the allowlist is application-owned and enables nothing for
+    # ordinary chat requests; callers must use the orchestrator explicitly.
+    tool_registry = build_demo_registry()
+    tool_executor = ToolExecutor(
+        tool_registry,
+        ToolExecutionPolicy(allowed_tools=tool_registry.names),
+        logger=resolved_logger,
+    )
+    tool_orchestrator = ToolCallingOrchestrator(
+        context_service, tool_executor, logger=resolved_logger
+    )
 
     app = FastAPI(
         title="MM AI Service",
@@ -96,6 +110,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware, logger=resolved_logger)
     app.state.prompt_service = prompt_service
     app.state.context_service = context_service
+    app.state.tool_orchestrator = tool_orchestrator
     register_error_handlers(app, resolved_logger)
     app.include_router(
         create_operations_router(

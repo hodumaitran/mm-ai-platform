@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from mm_ai_service.domain.errors import InvalidCompletionRequestError
+from mm_ai_service.domain.tools import (
+    CALL_ID_PATTERN,
+    TOOL_NAME_PATTERN,
+    ToolCall,
+    ToolDefinition,
+)
+
+MAX_TOOLS_PER_REQUEST = 8
+MAX_TOOL_CALLS_PER_MESSAGE = 8
 
 MODEL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 PROVIDER_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -47,15 +56,40 @@ class FinishReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
+    """One message. Tool fields are optional and only valid on the roles that own them.
+
+    An assistant message may carry ``tool_calls`` (and then may have empty content); a ``tool``
+    message must name the call it answers. Ordinary messages keep the non-empty content rule.
+    """
+
     role: MessageRole
     content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+    tool_name: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.role, MessageRole) or not isinstance(self.content, str):
+            raise _invalid()
+        if not isinstance(self.tool_calls, tuple):
+            object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
         if (
-            not isinstance(self.role, MessageRole)
-            or not isinstance(self.content, str)
-            or not self.content.strip()
+            len(self.tool_calls) > MAX_TOOL_CALLS_PER_MESSAGE
+            or any(not isinstance(call, ToolCall) for call in self.tool_calls)
+            or (self.tool_calls and self.role is not MessageRole.ASSISTANT)
         ):
+            raise _invalid()
+        if self.role is MessageRole.TOOL:
+            if (
+                not isinstance(self.tool_call_id, str)
+                or CALL_ID_PATTERN.fullmatch(self.tool_call_id) is None
+                or not isinstance(self.tool_name, str)
+                or TOOL_NAME_PATTERN.fullmatch(self.tool_name) is None
+            ):
+                raise _invalid()
+        elif self.tool_call_id is not None or self.tool_name is not None:
+            raise _invalid()
+        if not self.content.strip() and not self.tool_calls:
             raise _invalid()
 
 
@@ -164,10 +198,18 @@ class CompletionRequest:
     messages: tuple[ChatMessage, ...]
     options: GenerationOptions = field(default_factory=GenerationOptions)
     thinking: ThinkingConfiguration = field(default_factory=ThinkingConfiguration)
+    tools: tuple[ToolDefinition, ...] = ()
 
     def __post_init__(self) -> None:
         validate_model_identifier(self.model_identifier)
         object.__setattr__(self, "messages", tuple(self.messages))
+        object.__setattr__(self, "tools", tuple(self.tools))
+        if (
+            len(self.tools) > MAX_TOOLS_PER_REQUEST
+            or any(not isinstance(tool, ToolDefinition) for tool in self.tools)
+            or len({tool.name for tool in self.tools}) != len(self.tools)
+        ):
+            raise _invalid()
         if not self.messages or any(
             not isinstance(message, ChatMessage) for message in self.messages
         ):
@@ -193,6 +235,8 @@ class CompletionResponse:
         if not isinstance(self.finish_reason, FinishReason) or not isinstance(
             self.usage, TokenUsage
         ):
+            raise _invalid()
+        if bool(self.message.tool_calls) != (self.finish_reason is FinishReason.TOOL_CALL):
             raise _invalid()
         if not isinstance(self.metadata, tuple) or len(self.metadata) > 32:
             raise _invalid()

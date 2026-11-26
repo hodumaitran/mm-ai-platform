@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -15,6 +16,7 @@ from mm_ai_service.domain.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
     ServiceError,
+    UnsupportedCapabilityError,
 )
 from mm_ai_service.domain.llm import (
     ChatMessage,
@@ -31,6 +33,7 @@ from mm_ai_service.domain.llm import (
     ThinkingMode,
     TokenUsage,
 )
+from mm_ai_service.domain.tools import ParameterType, ToolCall, ToolDefinition
 
 type JsonObject = dict[str, Any]
 
@@ -67,6 +70,7 @@ class OllamaProvider:
         self._readiness_expires_at = 0.0
         self._readiness_lock = asyncio.Lock()
         self._capabilities = self._conservative_capabilities()
+        self._call_sequence = itertools.count(1)
 
     @property
     def capabilities(self) -> ModelCapabilities:
@@ -109,6 +113,8 @@ class OllamaProvider:
 
     async def stream(self, request: CompletionRequest) -> AsyncIterator[StreamEvent]:
         self._validate_requested_model(request.model_identifier)
+        if request.tools:
+            raise UnsupportedCapabilityError()  # tool-enabled streaming is not supported
         client = self._client_or_raise()
         payload = self._chat_payload(request, stream=True)
         try:
@@ -212,7 +218,7 @@ class OllamaProvider:
             chat=supports_completion,
             streaming=supports_completion,
             thinking=supports_thinking,
-            tool_calling=False,
+            tool_calling=supports_completion and "tools" in capabilities,
             structured_output=False,
             max_context_tokens=context_limit,
         )
@@ -265,10 +271,7 @@ class OllamaProvider:
         options = request.options
         payload: JsonObject = {
             "model": self._model,
-            "messages": [
-                {"role": message.role.value, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": [self._message_payload(message) for message in request.messages],
             "stream": stream,
             "options": {
                 "temperature": options.temperature,
@@ -277,11 +280,80 @@ class OllamaProvider:
                 "stop": list(options.stop_sequences),
             },
         }
+        if request.tools:
+            payload["tools"] = [self._tool_payload(tool) for tool in request.tools]
         if request.thinking.mode is ThinkingMode.ENABLED:
             payload["think"] = True
         elif request.thinking.mode is ThinkingMode.DISABLED:
             payload["think"] = False
         return payload
+
+    @staticmethod
+    def _message_payload(message: ChatMessage) -> JsonObject:
+        payload: JsonObject = {"role": message.role.value, "content": message.content}
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {"function": {"name": call.tool_name, "arguments": dict(call.arguments)}}
+                for call in message.tool_calls
+            ]
+        if message.role is MessageRole.TOOL:
+            payload["tool_name"] = message.tool_name
+        return payload
+
+    @staticmethod
+    def _tool_payload(tool: ToolDefinition) -> JsonObject:
+        """Map a model-neutral definition to Ollama's native function-tool schema."""
+        properties: JsonObject = {}
+        for parameter in tool.parameters:
+            schema: JsonObject = {
+                "type": parameter.type.value,
+                "description": parameter.description,
+            }
+            if parameter.type in (ParameterType.INTEGER, ParameterType.NUMBER):
+                if parameter.minimum is not None:
+                    schema["minimum"] = parameter.minimum
+                if parameter.maximum is not None:
+                    schema["maximum"] = parameter.maximum
+            if parameter.type is ParameterType.STRING:
+                schema["maxLength"] = parameter.max_length
+                if parameter.allowed_values is not None:
+                    schema["enum"] = list(parameter.allowed_values)
+            properties[parameter.name] = schema
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": [item.name for item in tool.parameters if item.required],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    def _tool_calls(self, message: JsonObject) -> tuple[ToolCall, ...]:
+        """Strictly parse native tool calls; anything malformed rejects the whole response."""
+        raw = message.get("tool_calls")
+        if raw is None:
+            return ()
+        if not isinstance(raw, list) or len(raw) > 8:
+            raise InvalidProviderResponseError()
+        calls: list[ToolCall] = []
+        for item in raw:
+            function = item.get("function") if isinstance(item, dict) else None
+            if not isinstance(function, dict):
+                raise InvalidProviderResponseError()
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if not isinstance(name, str) or not isinstance(arguments, dict):
+                raise InvalidProviderResponseError()
+            try:
+                calls.append(ToolCall(f"call_{next(self._call_sequence)}", name, arguments))
+            except ServiceError:
+                raise InvalidProviderResponseError() from None
+        return tuple(calls)
 
     def _completion_response(
         self,
@@ -296,12 +368,19 @@ class OllamaProvider:
             raise InvalidProviderResponseError()
         role = message.get("role")
         content = message.get("content")
-        if role != "assistant" or not isinstance(content, str) or not content.strip():
+        if role != "assistant" or not isinstance(content, str):
+            raise InvalidProviderResponseError()
+        tool_calls = self._tool_calls(message)
+        if not tool_calls and not content.strip():
             raise InvalidProviderResponseError()
         return CompletionResponse(
             model_identifier=requested_model,
-            message=ChatMessage(MessageRole.ASSISTANT, content),
-            finish_reason=self._finish_reason(payload.get("done_reason")),
+            message=ChatMessage(MessageRole.ASSISTANT, content, tool_calls),
+            finish_reason=(
+                FinishReason.TOOL_CALL
+                if tool_calls
+                else self._finish_reason(payload.get("done_reason"))
+            ),
             usage=self._usage(payload),
         )
 

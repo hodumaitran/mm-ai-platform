@@ -170,6 +170,15 @@ class ToolExecutor:
     def active_executions(self) -> int:
         return self._active
 
+    @property
+    def authorized_definitions(self) -> tuple[ToolDefinition, ...]:
+        """Definitions the application may offer a model: registered and on the allowlist."""
+        return tuple(
+            definition
+            for definition in self._registry.definitions
+            if definition.name in self._policy.allowed_tools
+        )
+
     async def execute(
         self,
         call: ToolCall,

@@ -286,3 +286,13 @@ class ToolResultTooLargeError(ServiceError):
 class ToolExecutionError(ServiceError):
     def __init__(self) -> None:
         super().__init__("TOOL_EXECUTION_FAILED", "The tool failed to execute.", 502)
+
+
+class DuplicateToolCallError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("DUPLICATE_TOOL_CALL", "A tool call identifier was repeated.", 502)
+
+
+class ToolCallLimitExceededError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_CALL_LIMIT_EXCEEDED", "The tool call limit was exceeded.", 422)

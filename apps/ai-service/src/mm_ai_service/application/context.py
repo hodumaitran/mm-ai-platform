@@ -90,6 +90,10 @@ class ContextService:
     def policy(self) -> ContextSelectionPolicy:
         return self._policy
 
+    @property
+    def prompts(self) -> PromptService:
+        return self._prompts
+
     def prepare(
         self, invocation: ContextInvocation, *, request_id: str | None = None
     ) -> ContextAssemblyResult:

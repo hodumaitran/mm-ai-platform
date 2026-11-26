@@ -130,7 +130,10 @@ def test_tool_messages_require_tool_calling_capability() -> None:
     async def complete(request: CompletionRequest) -> CompletionResponse:
         return response_for(request)
 
-    request = CompletionRequest("model", (ChatMessage(MessageRole.TOOL, "tool result"),))
+    request = CompletionRequest(
+        "model",
+        (ChatMessage(MessageRole.TOOL, "tool result", tool_call_id="c1", tool_name="calculate"),),
+    )
     provider = FakeProvider(complete, empty_stream, capabilities=ModelCapabilities())
     with pytest.raises(UnsupportedCapabilityError):
         asyncio.run(_gateway(provider).complete(request))

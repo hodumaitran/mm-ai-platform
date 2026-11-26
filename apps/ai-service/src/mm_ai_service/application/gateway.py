@@ -169,8 +169,8 @@ class LLMGateway:
         self._event(logging.INFO, "llm.stream_started")
         try:
             provider = self._registry.resolve()
-            if not provider.capabilities.streaming:
-                raise UnsupportedCapabilityError()
+            if not provider.capabilities.streaming or request.tools:
+                raise UnsupportedCapabilityError()  # tool-enabled streaming is not supported
             prepared = self._prepare_request(request, provider.capabilities)
             deadline = self._deadline(timeout_seconds)
             first_event = True
@@ -253,9 +253,13 @@ class LLMGateway:
             raise UnsupportedCapabilityError()
         if request.thinking.mode is ThinkingMode.ENABLED and not capabilities.thinking:
             raise UnsupportedCapabilityError()
-        if any(message.role is MessageRole.TOOL for message in request.messages) and not (
-            capabilities.tool_calling
-        ):
+        if (
+            request.tools
+            or any(
+                message.role is MessageRole.TOOL or message.tool_calls
+                for message in request.messages
+            )
+        ) and not capabilities.tool_calling:
             raise UnsupportedCapabilityError()
         options = request.options
         defaults = self._policy.generation_defaults
@@ -288,6 +292,13 @@ class LLMGateway:
         if not isinstance(response, CompletionResponse):
             raise InvalidProviderResponseError()
         if response.model_identifier != request.model_identifier:
+            raise InvalidProviderResponseError()
+        calls = response.message.tool_calls
+        offered = {tool.name: tool for tool in request.tools}
+        if calls and (
+            len({call.call_id for call in calls}) != len(calls)
+            or any(call.tool_name not in offered for call in calls)
+        ):
             raise InvalidProviderResponseError()
 
     def _event(self, level: int, name: str) -> None:

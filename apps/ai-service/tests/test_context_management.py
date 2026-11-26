@@ -331,7 +331,10 @@ def test_from_messages_requires_strict_user_assistant_alternation() -> None:
         (user, user),  # no reply
         (assistant, assistant),
         (ChatMessage(MessageRole.SYSTEM, "s"), assistant),  # system injection
-        (user, ChatMessage(MessageRole.TOOL, "t")),  # tool injection
+        (
+            user,
+            ChatMessage(MessageRole.TOOL, "t", tool_call_id="c1", tool_name="calculate"),
+        ),  # tool injection
     ):
         with pytest.raises(InvalidConversationError):
             ConversationSnapshot.from_messages(_conv(), bad)

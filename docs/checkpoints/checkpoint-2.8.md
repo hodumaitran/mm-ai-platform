@@ -78,3 +78,61 @@ cover the new domain and application modules.
 The core is ready: provider tool-call parsing, a bounded multi-round loop (continuing one
 `RequestDeadline`) and context integration of untrusted tool results can build on these contracts.
 Phase B needs owner approval and a commit of Phase A first.
+
+## Phases B and C: native tool calling and final acceptance
+
+Status: **LOCAL PASS** (Linux and remote CI NOT RUN). Baseline: HEAD `6bfb4a4` (Phase A commit), clean tree,
+`checkpoint-2.7` is an ancestor.
+
+### Implemented
+
+- Contracts: optional tool fields on `ChatMessage`, `CompletionRequest.tools`, `TOOL_CALL` finish rule.
+- Gateway: tool capability check, rejection of tool-enabled streaming, validation that a response only
+  calls offered tools with unique ids.
+- Ollama: capability detection from `/api/show`, native schema mapping, strict parsing, no text fallback,
+  reasoning never exposed.
+- `ToolCallingOrchestrator` (max 3 rounds, 5 calls, sequential, one `RequestDeadline`, budget
+  re-validation each round, duplicate-id rejection, admission released before tools run), wired as
+  `app.state.tool_orchestrator`. Chat routes and ordinary completion/SSE are unchanged and never offer tools.
+- Details: `docs/architecture/tool-calling.md`, `ollama-provider.md`.
+
+### Changed files
+
+Modified: `domain/llm.py`, `domain/errors.py`, `application/gateway.py`, `application/context.py`
+(`prompts` property), `application/tools.py` (`authorized_definitions`), `infrastructure/ollama.py`,
+`infrastructure/logging.py` (`tool_rounds`, `tool_calls`), `main.py`, `tests/test_gateway.py`,
+`tests/test_context_management.py` (tool messages now name their call), `tests/integration/test_ollama_live.py`,
+`docs/architecture/tool-calling.md`, `docs/architecture/ollama-provider.md`, this file.
+New: `application/tool_orchestration.py`, `tests/test_native_tool_calling.py`.
+
+### Live evidence (existing local `qwen3.5:35b`, loopback, no model or config change)
+
+Capability `tool_calling=True`. Execution is proven by orchestrator metadata and `tool.execution_*` log
+events, not by the answer alone.
+
+| Case                                 | Result                                                                                  |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| Vietnamese arithmetic (1234 x 5678)  | 1 round, `calculate` succeeded (3 args, 41 result chars), final answer 7.006.652, 3.6 s |
+| English text statistics              | 1 round, `text_statistics` succeeded, final answer: 5 words, 2.3 s                      |
+| Plain chat, tools on offer           | 0 rounds, 0 executions, 0.9 s                                                           |
+| Ordinary SSE-path streaming          | 9 events, 7 deltas, 1 terminal                                                          |
+| Deadline (`timeout_seconds=0.05`)    | `REQUEST_DEADLINE_EXCEEDED` after 0.055 s                                               |
+| Recovery afterwards                  | normal answer in 1.5 s; active tool executions 0, gateway operations 0, pending tasks 0 |
+| Live suite with new native-tool test | 10 passed (13.64 s), exit 0                                                             |
+
+### Gates (actual exit codes)
+
+| Check                                                 | Exit             | Result                                                     |
+| ----------------------------------------------------- | ---------------- | ---------------------------------------------------------- |
+| `pytest` deterministic                                | 0                | 447 passed, 10 skipped (404 prior + 43 new)                |
+| `ruff check` / `ruff format --check`                  | 0, 0             | clean                                                      |
+| `mypy` strict                                         | 0                | 58 source files                                            |
+| `pnpm.cmd check`                                      | 0                | web 7, NestJS 13 (unit) and e2e, Python 447 passed         |
+| `prettier --check .`, `git diff --check`, secret scan | see final report | recorded after the last edit                               |
+| Dependency audits                                     | NOT RUN          | manifests and lockfiles unchanged; reuses 2.7 section 28.2 |
+
+### Limitations
+
+No tool-enabled streaming; tool schemas consume context (no truncation, fails instead); an unknown tool
+name aborts the request; handlers are cooperative; allowlist is not RBAC; semantic prompt-injection
+detection deferred; Linux and remote CI NOT RUN.
