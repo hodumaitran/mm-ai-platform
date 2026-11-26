@@ -296,3 +296,18 @@ class DuplicateToolCallError(ServiceError):
 class ToolCallLimitExceededError(ServiceError):
     def __init__(self) -> None:
         super().__init__("TOOL_CALL_LIMIT_EXCEEDED", "The tool call limit was exceeded.", 422)
+
+
+class UnsupportedDocumentError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("UNSUPPORTED_DOCUMENT", "The document type is not supported.", 415)
+
+
+class DocumentTooLargeError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("DOCUMENT_TOO_LARGE", "The document is too large.", 413)
+
+
+class DocumentProcessorBusyError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("DOCUMENT_PROCESSOR_BUSY", "The document processor is busy.", 429)

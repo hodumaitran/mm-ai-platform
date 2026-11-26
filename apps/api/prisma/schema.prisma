@@ -40,6 +40,7 @@ model User {
   lastLoginAt   DateTime?      @db.Timestamptz(3)
   sessions      Session[]
   conversations Conversation[]
+  documents     Document[]
 
   @@map("users")
 }
@@ -93,4 +94,98 @@ model Message {
   @@unique([conversationId, clientRequestId])
   @@index([status, generationStartedAt])
   @@map("messages")
+}
+
+enum DocumentKind {
+  PDF
+  DOCX
+  TXT
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  READY
+  PARTIAL
+  FAILED
+  OCR_REQUIRED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+model Document {
+  id                 String                 @id @default(uuid(7)) @db.Uuid
+  userId             String                 @db.Uuid
+  originalFilename   String
+  // Internal, server-generated key (never derived from user input); the file lives outside any public directory.
+  storageKey         String                 @unique
+  kind               DocumentKind
+  mediaType          String
+  sizeBytes          Int
+  sha256             String
+  status             DocumentStatus         @default(PENDING)
+  extractionMetadata Json?
+  errorCode          String?
+  // Chunks of exactly this generation are the published result; others are staging or stale.
+  activeGeneration   String?                @db.Uuid
+  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime               @default(now()) @db.Timestamptz(3)
+  user               User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks             DocumentChunk[]
+  job                DocumentProcessingJob?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, status])
+  @@index([userId, kind])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  documentId        String   @db.Uuid
+  // The processing job (attempt) that produced this chunk; publication switches Document.activeGeneration.
+  generation        String   @db.Uuid
+  chunkIndex        Int
+  content           String
+  pageStart         Int?
+  pageEnd           Int?
+  heading           String?
+  section           String?
+  // Extra source location metadata, for example the legal articles contained in the chunk.
+  location          Json?
+  charStart         Int
+  charEnd           Int
+  estimatedTokens   Int
+  processingVersion String
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  document          Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, generation, chunkIndex])
+  @@map("document_chunks")
+}
+
+model DocumentProcessingJob {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  // One job per document (unique): retries reuse the row, so duplicate jobs cannot exist.
+  documentId     String    @unique @db.Uuid
+  status         JobStatus @default(PENDING)
+  attempts       Int       @default(0)
+  // Claim: only the holder of leaseToken may publish; an expired lease can be claimed again.
+  leaseToken     String?   @db.Uuid
+  leaseExpiresAt DateTime? @db.Timestamptz(3)
+  runAfter       DateTime  @default(now()) @db.Timestamptz(3)
+  startedAt      DateTime? @db.Timestamptz(3)
+  finishedAt     DateTime? @db.Timestamptz(3)
+  errorCode      String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @db.Timestamptz(3)
+  document       Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAfter])
+  @@map("document_processing_jobs")
 }

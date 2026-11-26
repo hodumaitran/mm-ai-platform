@@ -20,10 +20,16 @@ from mm_ai_service.application.tool_orchestration import ToolCallingOrchestrator
 from mm_ai_service.application.tools import ToolExecutionPolicy, ToolExecutor
 from mm_ai_service.config import Settings, load_settings
 from mm_ai_service.domain.llm import GenerationOptions
+from mm_ai_service.infrastructure.documents.runner import SubprocessDocumentRunner
 from mm_ai_service.infrastructure.lifecycle import application_lifespan
 from mm_ai_service.infrastructure.logging import build_service_logger
 from mm_ai_service.infrastructure.ollama import OllamaProvider
 from mm_ai_service.infrastructure.prompts import build_builtin_prompt_registry
+from mm_ai_service.presentation.documents import (
+    DocumentRunner,
+    create_documents_router,
+    limits_from_settings,
+)
 from mm_ai_service.presentation.errors import register_error_handlers
 from mm_ai_service.presentation.middleware import RequestContextMiddleware
 from mm_ai_service.presentation.routes import create_operations_router
@@ -36,6 +42,7 @@ def create_app(
     providers: Sequence[LLMProvider] = (),
     readiness_probe: ReadinessProbe | None = None,
     logger: EventLogger | None = None,
+    document_runner: DocumentRunner | None = None,
 ) -> FastAPI:
     """Build an isolated application instance from explicit dependencies."""
     resolved_settings = settings if settings is not None else load_settings()
@@ -118,6 +125,18 @@ def create_app(
             gateway,
             context_service,
             resolved_readiness_probe,
+            resolved_logger,
+        )
+    )
+    app.include_router(
+        create_documents_router(
+            resolved_settings,
+            document_runner
+            if document_runner is not None
+            else SubprocessDocumentRunner(
+                limits_from_settings(resolved_settings),
+                resolved_settings.document_process_timeout_seconds,
+            ),
             resolved_logger,
         )
     )

@@ -15,6 +15,7 @@ import {
   type Turn,
 } from '../lib/conversation.ts';
 import { AdminPanel } from './admin-panel.tsx';
+import { DocumentsView } from './documents-view.tsx';
 import type { SessionUser } from './login-form.tsx';
 import { CopyButton, Markdown } from './markdown.tsx';
 
@@ -64,6 +65,7 @@ export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () =>
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const [admin, setAdmin] = useState(false);
+  const [view, setView] = useState<'chat' | 'documents'>('chat');
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
@@ -284,6 +286,7 @@ export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () =>
   );
 
   const newConversation = (): void => {
+    setView('chat');
     stop();
     activeRef.current = null;
     setActiveId(null);
@@ -299,6 +302,7 @@ export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () =>
   };
 
   const select = (id: string): void => {
+    setView('chat');
     if (id === activeRef.current) {
       setDrawer(false);
       return;
@@ -378,6 +382,25 @@ export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () =>
           >
             Thu gọn
           </button>
+        </div>
+        <div className="flex gap-1 px-3 pb-2" role="tablist" aria-label="Không gian làm việc">
+          {(['chat', 'documents'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={view === tab}
+              onClick={() => {
+                setView(tab);
+                setDrawer(false);
+              }}
+              className={`flex-1 rounded-md px-3 py-1.5 text-sm ${
+                view === tab ? 'bg-slate-200 font-medium' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {tab === 'chat' ? 'Trò chuyện' : 'Tài liệu'}
+            </button>
+          ))}
         </div>
         <div className="space-y-2 px-3 pb-2">
           <button
@@ -560,122 +583,126 @@ export function ChatApp({ user, onLogout }: { user: SessionUser; onLogout: () =>
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => {
-              setCollapsed(false);
-              setDrawer(true);
+      {view === 'documents' ? (
+        <DocumentsView onOpenList={() => setDrawer(true)} />
+      ) : (
+        <main className="flex min-w-0 flex-1 flex-col">
+          <header className="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCollapsed(false);
+                setDrawer(true);
+              }}
+              className={`rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 ${
+                collapsed ? '' : 'md:hidden'
+              }`}
+            >
+              Danh sách
+            </button>
+            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
+              {activeSummary?.title ?? 'Cuộc trò chuyện mới'}
+            </h1>
+            <span className="hidden text-xs text-slate-500 sm:inline">Mô hình cục bộ · MM AI</span>
+          </header>
+
+          <div
+            ref={scroller}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
             }}
-            className={`rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 ${
-              collapsed ? '' : 'md:hidden'
-            }`}
+            className="min-h-0 flex-1 overflow-y-auto"
           >
-            Danh sách
-          </button>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
-            {activeSummary?.title ?? 'Cuộc trò chuyện mới'}
-          </h1>
-          <span className="hidden text-xs text-slate-500 sm:inline">Mô hình cục bộ · MM AI</span>
-        </header>
-
-        <div
-          ref={scroller}
-          onScroll={(event) => {
-            const element = event.currentTarget;
-            stick.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-          }}
-          className="min-h-0 flex-1 overflow-y-auto"
-        >
-          <div className="mx-auto w-full max-w-3xl px-4 py-6">
-            {turnsState === 'loading' ? (
-              <p role="status" className="py-20 text-center text-sm text-slate-500">
-                Đang tải cuộc trò chuyện…
-              </p>
-            ) : turns.length === 0 ? (
-              <div className="py-20 text-center">
-                <h2 className="text-2xl font-semibold">MM AI</h2>
-                <p className="mt-2 text-slate-500">Bạn muốn hỏi điều gì hôm nay?</p>
-              </div>
-            ) : (
-              <ol className="space-y-8">
-                {turns.map((turn) => (
-                  <li key={turn.id} className="space-y-4">
-                    <div className="flex justify-end">
-                      <p className="max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
-                        {turn.user}
-                      </p>
-                    </div>
-                    <TurnView
-                      turn={turn}
-                      onRerun={() => rerun(turn)}
-                      canRerun={!generating && turn.id === lastTurnId}
-                    />
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t border-slate-200 bg-white px-4 pt-3 pb-3">
-          <div className="mx-auto w-full max-w-3xl">
-            {banner !== null && (
-              <p role="alert" className="mb-2 text-xs text-red-700">
-                {banner}
-              </p>
-            )}
-            <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 focus-within:border-slate-500">
-              <textarea
-                ref={textarea}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-                onCompositionStart={() => {
-                  composing.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composing.current = false;
-                }}
-                rows={1}
-                aria-label="Nhập tin nhắn"
-                placeholder="Nhập tin nhắn…"
-                title="Enter để gửi, Shift+Enter để xuống dòng"
-                className="max-h-52 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
-              />
-              {generating ? (
-                <button
-                  type="button"
-                  onClick={stop}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-                >
-                  Dừng
-                </button>
+            <div className="mx-auto w-full max-w-3xl px-4 py-6">
+              {turnsState === 'loading' ? (
+                <p role="status" className="py-20 text-center text-sm text-slate-500">
+                  Đang tải cuộc trò chuyện…
+                </p>
+              ) : turns.length === 0 ? (
+                <div className="py-20 text-center">
+                  <h2 className="text-2xl font-semibold">MM AI</h2>
+                  <p className="mt-2 text-slate-500">Bạn muốn hỏi điều gì hôm nay?</p>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => void send()}
-                  disabled={validity !== 'ok'}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  Gửi
-                </button>
+                <ol className="space-y-8">
+                  {turns.map((turn) => (
+                    <li key={turn.id} className="space-y-4">
+                      <div className="flex justify-end">
+                        <p className="max-w-[85%] rounded-2xl bg-slate-100 px-4 py-2.5 text-sm break-words whitespace-pre-wrap">
+                          {turn.user}
+                        </p>
+                      </div>
+                      <TurnView
+                        turn={turn}
+                        onRerun={() => rerun(turn)}
+                        canRerun={!generating && turn.id === lastTurnId}
+                      />
+                    </li>
+                  ))}
+                </ol>
               )}
             </div>
-            <div className="mt-1.5 flex justify-between text-xs text-slate-500">
-              <span className={validity === 'too-long' ? 'text-red-700' : ''}>
-                {validity === 'too-long'
-                  ? `Tin nhắn dài quá ${MAX_MESSAGE_CHARACTERS} ký tự. Hãy rút gọn trước khi gửi.`
-                  : 'MM AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.'}
-              </span>
-              <span>
-                {draft.length}/{MAX_MESSAGE_CHARACTERS}
-              </span>
+          </div>
+
+          <div className="border-t border-slate-200 bg-white px-4 pt-3 pb-3">
+            <div className="mx-auto w-full max-w-3xl">
+              {banner !== null && (
+                <p role="alert" className="mb-2 text-xs text-red-700">
+                  {banner}
+                </p>
+              )}
+              <div className="flex items-end gap-2 rounded-xl border border-slate-300 bg-white p-2 focus-within:border-slate-500">
+                <textarea
+                  ref={textarea}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={onKeyDown}
+                  onCompositionStart={() => {
+                    composing.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    composing.current = false;
+                  }}
+                  rows={1}
+                  aria-label="Nhập tin nhắn"
+                  placeholder="Nhập tin nhắn…"
+                  title="Enter để gửi, Shift+Enter để xuống dòng"
+                  className="max-h-52 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
+                />
+                {generating ? (
+                  <button
+                    type="button"
+                    onClick={stop}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                  >
+                    Dừng
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void send()}
+                    disabled={validity !== 'ok'}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    Gửi
+                  </button>
+                )}
+              </div>
+              <div className="mt-1.5 flex justify-between text-xs text-slate-500">
+                <span className={validity === 'too-long' ? 'text-red-700' : ''}>
+                  {validity === 'too-long'
+                    ? `Tin nhắn dài quá ${MAX_MESSAGE_CHARACTERS} ký tự. Hãy rút gọn trước khi gửi.`
+                    : 'MM AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.'}
+                </span>
+                <span>
+                  {draft.length}/{MAX_MESSAGE_CHARACTERS}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      )}
       {admin && <AdminPanel currentUserId={user.id} onClose={() => setAdmin(false)} />}
     </div>
   );

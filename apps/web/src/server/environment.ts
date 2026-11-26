@@ -2,6 +2,7 @@ export type WebEnvironment = {
   apiBaseUrl: URL;
   chatRequestTimeoutMs: number;
   chatMaxBodyBytes: number;
+  documentMaxBytes: number;
 };
 
 function boundedInteger(
@@ -40,6 +41,14 @@ export function validateWebEnvironment(input: Record<string, string | undefined>
       'CHAT_REQUEST_TIMEOUT_MS',
       1000,
       3600000,
+    ),
+    // Must match DOCUMENT_MAX_BYTES in the API and AI_SERVICE_DOCUMENT_MAX_BYTES in the AI service.
+    documentMaxBytes: boundedInteger(
+      input.DOCUMENT_MAX_BYTES,
+      52428800,
+      'DOCUMENT_MAX_BYTES',
+      1024,
+      1073741824,
     ),
     chatMaxBodyBytes: boundedInteger(
       input.CHAT_MAX_BODY_BYTES,

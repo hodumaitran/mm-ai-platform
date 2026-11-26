@@ -35,6 +35,22 @@ class Settings(BaseSettings):
     chat_max_message_characters: int = Field(default=2048, ge=1, le=65536)
     chat_max_input_characters: int = Field(default=3072, ge=1, le=262144)
     chat_max_output_tokens: int = Field(default=1024, ge=1)
+    # Document processing (MVP-03). These are configurable safety limits, not verified capacity.
+    document_max_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=1024**3)
+    document_max_pdf_pages: int = Field(default=5000, ge=1, le=100_000)
+    document_max_concurrency: int = Field(default=1, ge=1, le=8)
+    document_process_timeout_seconds: float = Field(default=600.0, gt=0, le=7200)
+    document_max_extracted_chars: int = Field(default=40_000_000, ge=1000)
+    document_max_chunks: int = Field(default=100_000, ge=1)
+    document_chunk_target_tokens: int = Field(default=512, ge=32, le=8192)
+    document_chunk_overlap_tokens: int = Field(default=64, ge=0, le=2048)
+    document_chunk_max_tokens: int = Field(default=768, ge=64, le=16384)
+    document_docx_max_entries: int = Field(default=5000, ge=1)
+    document_docx_max_uncompressed_bytes: int = Field(default=300 * 1024 * 1024, ge=1024)
+    document_docx_max_compression_ratio: int = Field(default=100, ge=1)
+    document_worker_memory_limit_bytes: int = Field(default=2 * 1024**3, ge=64 * 1024**2)
+    document_temp_dir: str | None = None
+
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = Field(
         default="qwen3.5:35b",
@@ -66,6 +82,12 @@ class Settings(BaseSettings):
             raise ValueError("Chat input and output budgets cannot exceed the context window")
         if self.chat_max_message_characters > self.chat_max_input_characters:
             raise ValueError("Chat message limit cannot exceed the aggregate input limit")
+        if not (
+            self.document_chunk_overlap_tokens
+            < self.document_chunk_target_tokens
+            <= self.document_chunk_max_tokens
+        ):
+            raise ValueError("Document chunk sizes must satisfy overlap < target <= maximum")
         parsed = urlsplit(self.ollama_base_url)
         if (
             parsed.scheme != "http"

@@ -181,3 +181,106 @@ test('proxy rejects oversized bodies, wrong content types and invalid stream res
   assert.equal(down.status, 502);
   assert.doesNotMatch(await down.text(), /ECONNREFUSED|127\.0\.0\.1/);
 });
+
+// --- documents -------------------------------------------------------------------------------
+
+function multipart(size, headers = {}) {
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(size).fill(65)]), 'a.txt');
+  const request = new Request('http://127.0.0.1:3000/api/v1/documents', {
+    method: 'POST',
+    headers,
+    body: form,
+  });
+  return request;
+}
+
+test('document upload is streamed to the API with cookies and CSRF, never buffered as JSON', async () => {
+  process.env.API_BASE_URL = 'http://127.0.0.1:3001/api/v1';
+  let seen;
+  globalThis.fetch = async (input, init) => {
+    seen = { url: String(input), init };
+    const received = [];
+    for await (const chunk of init.body) received.push(chunk);
+    seen.bytes = received.reduce((sum, c) => sum + c.byteLength, 0);
+    return Response.json({ id: 'x' }, { status: 201 });
+  };
+  const request = multipart(5000, { Cookie: 'mm_session=abc', 'X-CSRF-Token': 'tok' });
+  const response = await forwardApiRequest(request);
+  assert.equal(response.status, 201);
+  assert.equal(seen.url, 'http://127.0.0.1:3001/api/v1/documents');
+  assert.equal(seen.init.duplex, 'half');
+  assert.match(seen.init.headers.get('content-type'), /^multipart\/form-data; boundary=/);
+  assert.equal(seen.init.headers.get('cookie'), 'mm_session=abc');
+  assert.equal(seen.init.headers.get('x-csrf-token'), 'tok');
+  assert.ok(seen.bytes >= 5000);
+});
+
+test('document upload enforces the size limit before and while streaming', async () => {
+  process.env.API_BASE_URL = 'http://127.0.0.1:3001/api/v1';
+  process.env.DOCUMENT_MAX_BYTES = '2048';
+  let reached = 0;
+  globalThis.fetch = async (_input, init) => {
+    reached += 1;
+    for await (const piece of init.body) void piece; // drain
+    return Response.json({});
+  };
+  // Declared size over the limit is rejected without contacting the API.
+  const declared = multipart(2 * 1024 * 1024 + 10, { 'Content-Length': String(3 * 1024 * 1024) });
+  assert.equal((await forwardApiRequest(declared)).status, 413);
+  assert.equal(reached, 0);
+  // An undeclared (chunked) body is cut off when it crosses the limit.
+  const chunked = new Request('http://127.0.0.1:3000/api/v1/documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'multipart/form-data; boundary=x' },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        controller.close();
+      },
+    }),
+    duplex: 'half',
+  });
+  assert.equal((await forwardApiRequest(chunked)).status, 413);
+  delete process.env.DOCUMENT_MAX_BYTES;
+});
+
+test('document upload rejects non-multipart bodies and the download keeps attachment headers', async () => {
+  process.env.API_BASE_URL = 'http://127.0.0.1:3001/api/v1';
+  globalThis.fetch = async () => {
+    throw new Error('must not be called');
+  };
+  const json = new Request('http://127.0.0.1:3000/api/v1/documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal((await forwardApiRequest(json)).status, 415);
+  const id = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+  globalThis.fetch = async () =>
+    new Response('PDFBYTES', {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="a.pdf"',
+        'Content-Length': '8',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'X-Internal-Secret': 'must-not-leak',
+      },
+    });
+  const download = await forwardApiRequest(browser('GET', `/documents/${id}/download`));
+  assert.equal(download.headers.get('content-disposition'), 'attachment; filename="a.pdf"');
+  assert.equal(download.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(download.headers.get('x-internal-secret'), null);
+  assert.equal(await download.text(), 'PDFBYTES');
+  for (const [method, path] of [
+    ['PUT', `/documents/${id}`],
+    ['GET', '/documents/not-a-uuid'],
+    ['GET', `/documents/${id}/file`],
+    ['POST', `/documents/${id}/process`],
+  ]) {
+    assert.equal((await forwardApiRequest(browser(method, path))).status, 404, `${method} ${path}`);
+  }
+});

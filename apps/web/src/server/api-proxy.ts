@@ -5,7 +5,15 @@ const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const SHORT_TIMEOUT_MS = 30_000;
 
-type Route = { method: string; pattern: RegExp; stream: boolean };
+type Route = {
+  method: string;
+  pattern: RegExp;
+  stream: boolean;
+  /** Multipart upload: the body is streamed through with a hard byte limit, never buffered. */
+  upload?: boolean;
+  /** Long-running response (large download): uses the long timeout. */
+  long?: boolean;
+};
 
 /**
  * The only backend paths the browser may reach. NestJS remains the authentication and
@@ -25,7 +33,16 @@ const ROUTES: readonly Route[] = [
   { method: 'DELETE', pattern: new RegExp(`^conversations/${UUID}$`), stream: false },
   { method: 'POST', pattern: new RegExp(`^conversations/${UUID}/messages$`), stream: true },
   { method: 'POST', pattern: new RegExp(`^conversations/${UUID}/regenerate$`), stream: true },
+  { method: 'GET', pattern: /^documents$/, stream: false },
+  { method: 'POST', pattern: /^documents$/, stream: false, upload: true },
+  { method: 'GET', pattern: new RegExp(`^documents/${UUID}$`), stream: false },
+  { method: 'GET', pattern: new RegExp(`^documents/${UUID}/chunks$`), stream: false },
+  { method: 'GET', pattern: new RegExp(`^documents/${UUID}/download$`), stream: false, long: true },
+  { method: 'POST', pattern: new RegExp(`^documents/${UUID}/retry$`), stream: false },
+  { method: 'DELETE', pattern: new RegExp(`^documents/${UUID}$`), stream: false },
 ];
+// Multipart framing adds a little to the file size; the same allowance exists in NestJS.
+const UPLOAD_OVERHEAD_BYTES = 1024 * 1024;
 
 // Request headers that are forwarded; everything else (including Host) is dropped.
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'cookie', 'origin', 'x-csrf-token'];
@@ -44,15 +61,22 @@ export async function forwardApiRequest(request: Request): Promise<Response> {
   }
 
   const started = performance.now();
-  let body: string | undefined;
-  if (request.method === 'POST' || request.method === 'PATCH') {
+  let body: BodyInit | undefined;
+  if (route.upload) {
+    const prepared = prepareUpload(request, environment.documentMaxBytes + UPLOAD_OVERHEAD_BYTES);
+    if (prepared instanceof Response) return prepared;
+    body = prepared;
+  } else if (request.method === 'POST' || request.method === 'PATCH') {
     try {
       body = await readBoundedBody(request, environment.chatMaxBodyBytes);
     } catch (error) {
       return safeError(error instanceof BodyTooLargeError ? 413 : 400, requestId);
     }
   }
-  const budget = route.stream ? environment.chatRequestTimeoutMs : SHORT_TIMEOUT_MS;
+  const budget =
+    route.stream || route.upload || route.long
+      ? environment.chatRequestTimeoutMs
+      : SHORT_TIMEOUT_MS;
   const remaining = Math.max(1, budget - Math.ceil(performance.now() - started));
   const controller = new AbortController();
   const abort = (): void => controller.abort();
@@ -66,6 +90,10 @@ export async function forwardApiRequest(request: Request): Promise<Response> {
     if (value !== null && !(name === 'content-type' && body === undefined)) {
       headers.set(name, value);
     }
+  }
+  if (route.upload) {
+    const length = request.headers.get('content-length');
+    if (length !== null) headers.set('content-length', length);
   }
   headers.set('Cache-Control', 'no-store');
   headers.set('X-Request-ID', requestId);
@@ -81,7 +109,8 @@ export async function forwardApiRequest(request: Request): Promise<Response> {
       redirect: 'manual',
       headers,
       signal: controller.signal,
-    });
+      ...(route.upload ? { duplex: 'half' } : {}),
+    } as RequestInit);
     if (route.stream && upstream.ok) {
       const contentType = upstream.headers.get('content-type') ?? '';
       if (!contentType.startsWith('text/event-stream') || upstream.body === null) {
@@ -100,6 +129,15 @@ export async function forwardApiRequest(request: Request): Promise<Response> {
     if (retryAfter !== null && /^\d{1,6}$/.test(retryAfter)) {
       responseHeaders.set('Retry-After', retryAfter);
     }
+    for (const name of [
+      'content-disposition',
+      'content-length',
+      'x-content-type-options',
+      'content-security-policy',
+    ]) {
+      const value = upstream.headers.get(name);
+      if (value !== null) responseHeaders.set(name, value);
+    }
     for (const cookie of upstream.headers.getSetCookie()) {
       responseHeaders.append('Set-Cookie', cookie);
     }
@@ -112,10 +150,42 @@ export async function forwardApiRequest(request: Request): Promise<Response> {
       status: upstream.status,
       headers: responseHeaders,
     });
-  } catch {
+  } catch (error) {
     cleanup(timer, request, abort);
+    if (causedBy(error, BodyTooLargeError)) return safeError(413, requestId);
     return safeError(controller.signal.aborted ? 504 : 502, requestId);
   }
+}
+
+/**
+ * Validate a multipart upload and return a byte-counting stream for the body. A declared size over
+ * the limit is refused at once; an undeclared (chunked) body is cut off when it crosses the limit.
+ */
+function prepareUpload(request: Request, limit: number): ReadableStream<Uint8Array> | Response {
+  const requestId = selectRequestId(request.headers.get('X-Request-ID'));
+  if (
+    !(request.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data')
+  ) {
+    return safeError(415, requestId);
+  }
+  const declared = request.headers.get('content-length');
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) {
+    return safeError(413, requestId);
+  }
+  if (request.body === null) return safeError(400, requestId);
+  let total = 0;
+  return request.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        total += chunk.byteLength;
+        if (total > limit) {
+          controller.error(new BodyTooLargeError());
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
 }
 
 async function readBoundedBody(
@@ -208,3 +278,11 @@ function ensureTrailingSlash(value: URL): URL {
 }
 
 class BodyTooLargeError extends Error {}
+
+function causedBy(error: unknown, type: new (...args: never[]) => Error): boolean {
+  for (let current = error, depth = 0; current !== undefined && depth < 5; depth += 1) {
+    if (current instanceof type) return true;
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return false;
+}

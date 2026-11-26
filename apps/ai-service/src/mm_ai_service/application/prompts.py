@@ -198,6 +198,11 @@ class HeuristicTokenEstimator:
             prompt_tokens, output_tokens, prompt_tokens + output_tokens, BudgetAccuracy.ESTIMATE
         )
 
+    @classmethod
+    def text_tokens(cls, text: str) -> int:
+        """Estimated tokens for bare text (no chat framing); an estimate, not a tokenizer count."""
+        return math.ceil(sum(cls._weight(ord(character), character) for character in text) / 2)
+
     @staticmethod
     def _weight(code_point: int, character: str) -> int:
         if code_point < 0x80:

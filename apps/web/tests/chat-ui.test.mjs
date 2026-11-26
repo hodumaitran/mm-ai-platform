@@ -12,6 +12,14 @@ import {
   normalizeTitle,
   validateDraft,
 } from '../src/lib/conversation.ts';
+import {
+  MAX_UPLOAD_BYTES,
+  errorText,
+  formatBytes,
+  isActive,
+  uploadErrorText,
+  validateFile,
+} from '../src/lib/documents.ts';
 import { parseInline, parseMarkdown } from '../src/lib/markdown.ts';
 import { createSseParser } from '../src/lib/sse.ts';
 
@@ -284,4 +292,33 @@ test('a user message without an assistant reply is shown as interrupted, not dro
   const turns = messagesToTurns([stored(1, 'USER', 'lẻ')]);
   assert.equal(turns.length, 1);
   assert.equal(turns[0].error.kind, 'interrupted');
+});
+
+// --- document library helpers -----------------------------------------------------------------
+
+test('file validation mirrors the server rules (type, empty, size)', () => {
+  assert.equal(validateFile({ name: 'a.pdf', size: 10 }), null);
+  assert.equal(validateFile({ name: 'Báo cáo.DOCX', size: 10 }), null);
+  assert.equal(validateFile({ name: 'a.txt', size: MAX_UPLOAD_BYTES }), null);
+  assert.match(validateFile({ name: 'a.exe', size: 10 }), /PDF, DOCX và TXT/);
+  assert.match(validateFile({ name: 'noextension', size: 10 }), /PDF, DOCX và TXT/);
+  assert.match(validateFile({ name: 'a.pdf', size: MAX_UPLOAD_BYTES + 1 }), /vượt quá 50/);
+  assert.equal(validateFile({ name: 'a.pdf', size: 0 }), 'Tệp rỗng.');
+});
+
+test('sizes, statuses and error codes render as safe Vietnamese text', () => {
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(1536), '1.5 KiB');
+  assert.equal(formatBytes(50 * 1024 * 1024), '50.0 MiB');
+  assert.equal(isActive('PENDING') && isActive('PROCESSING'), true);
+  assert.equal(isActive('READY') || isActive('FAILED') || isActive('OCR_REQUIRED'), false);
+  assert.match(errorText('ENCRYPTED_DOCUMENT'), /mật khẩu/);
+  assert.match(errorText('OCR_REQUIRED'), /OCR/);
+  assert.match(errorText('SOMETHING_NEW'), /không thành công/);
+  assert.equal(errorText(null), '');
+  assert.match(uploadErrorText(413, undefined), /vượt quá/);
+  assert.match(uploadErrorText(415, 'CONTENT_MISMATCH'), /không khớp/);
+  assert.match(uploadErrorText(415, 'UNSUPPORTED_FORMAT'), /PDF, DOCX/);
+  assert.equal(uploadErrorText(400, 'EMPTY_FILE'), 'Tệp rỗng.');
+  assert.doesNotMatch(uploadErrorText(500, undefined), /undefined|Error/);
 });

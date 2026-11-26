@@ -6,6 +6,7 @@ import { AiModule } from './ai/ai.module';
 import { AuthModule } from './auth/auth.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { DatabaseModule } from './database/database.module';
+import { DocumentsModule } from './documents/documents.module';
 import { UsersModule } from './users/users.module';
 import { RequestContextMiddleware } from './common/request-context.middleware';
 
@@ -18,6 +19,7 @@ import { RequestContextMiddleware } from './common/request-context.middleware';
     AiModule,
     UsersModule,
     ConversationsModule,
+    DocumentsModule,
   ],
 })
 export class AppModule implements NestModule {

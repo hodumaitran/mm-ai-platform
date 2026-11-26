@@ -58,3 +58,4 @@ Desktop.ini
 
 # Generated Prisma client (created by `prisma generate`)
 apps/api/src/generated/
+apps/api/storage/

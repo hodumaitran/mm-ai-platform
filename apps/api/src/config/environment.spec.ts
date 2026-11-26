@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { validateEnvironment } from './environment';
 
 const REQUIRED = {
@@ -24,6 +25,15 @@ describe('validateEnvironment', () => {
       LOGIN_MAX_FAILURES: 5,
       LOGIN_WINDOW_SECONDS: 900,
       GENERATION_STALE_SECONDS: 360,
+      DOCUMENT_STORAGE_DIR: resolve('./storage'),
+      DOCUMENT_MAX_BYTES: 52428800,
+      DOCUMENT_MAX_CONCURRENCY: 1,
+      DOCUMENT_JOB_LEASE_SECONDS: 90,
+      DOCUMENT_JOB_TIMEOUT_SECONDS: 660,
+      DOCUMENT_MAX_ATTEMPTS: 3,
+      DOCUMENT_POLL_INTERVAL_MS: 2000,
+      DOCUMENT_WORKER_ENABLED: true,
+      DOCUMENT_ORPHAN_GRACE_SECONDS: 600,
     });
   });
 
@@ -82,5 +92,20 @@ describe('validateEnvironment', () => {
       validateEnvironment({ ...REQUIRED, NODE_ENV: 'production', SESSION_COOKIE_SECURE: 'false' })
         .SESSION_COOKIE_SECURE,
     ).toBe(false);
+  });
+
+  it('validates document storage and limits', () => {
+    expect(() =>
+      validateEnvironment({ ...REQUIRED, DOCUMENT_STORAGE_DIR: './public/uploads' }),
+    ).toThrow('publicly served');
+    expect(() => validateEnvironment({ ...REQUIRED, DOCUMENT_MAX_BYTES: '10' })).toThrow(
+      'DOCUMENT_MAX_BYTES',
+    );
+    expect(() => validateEnvironment({ ...REQUIRED, DOCUMENT_MAX_CONCURRENCY: '0' })).toThrow(
+      'DOCUMENT_MAX_CONCURRENCY',
+    );
+    expect(() => validateEnvironment({ ...REQUIRED, DOCUMENT_WORKER_ENABLED: 'yes' })).toThrow(
+      'DOCUMENT_WORKER_ENABLED',
+    );
   });
 });

@@ -1,3 +1,5 @@
+import { resolve, sep } from 'node:path';
+
 export type Environment = {
   NODE_ENV: 'development' | 'test' | 'production';
   API_HOST: string;
@@ -15,6 +17,15 @@ export type Environment = {
   LOGIN_MAX_FAILURES: number;
   LOGIN_WINDOW_SECONDS: number;
   GENERATION_STALE_SECONDS: number;
+  DOCUMENT_STORAGE_DIR: string;
+  DOCUMENT_MAX_BYTES: number;
+  DOCUMENT_MAX_CONCURRENCY: number;
+  DOCUMENT_JOB_LEASE_SECONDS: number;
+  DOCUMENT_JOB_TIMEOUT_SECONDS: number;
+  DOCUMENT_MAX_ATTEMPTS: number;
+  DOCUMENT_POLL_INTERVAL_MS: number;
+  DOCUMENT_WORKER_ENABLED: boolean;
+  DOCUMENT_ORPHAN_GRACE_SECONDS: number;
 };
 
 function parseNodeEnvironment(value: unknown): Environment['NODE_ENV'] {
@@ -119,6 +130,23 @@ function parseOrigins(value: unknown): string[] {
     });
 }
 
+function parseStorageDirectory(value: unknown): string {
+  const raw = readString(value, './storage', 'DOCUMENT_STORAGE_DIR').trim();
+  if (raw === '' || raw.includes(String.fromCharCode(0))) {
+    throw new Error('DOCUMENT_STORAGE_DIR must be a filesystem path');
+  }
+  const resolved = resolve(raw);
+  // Uploaded files must never sit under a directory that a web server could publish.
+  if (
+    resolved
+      .split(sep)
+      .some((segment) => ['public', 'static', 'www', 'wwwroot'].includes(segment.toLowerCase()))
+  ) {
+    throw new Error('DOCUMENT_STORAGE_DIR must not be inside a publicly served directory');
+  }
+  return resolved;
+}
+
 function readString(value: unknown, fallback: string, name: string): string {
   if (value === undefined) {
     return fallback;
@@ -198,6 +226,63 @@ export function validateEnvironment(input: Record<string, unknown>): Environment
       'GENERATION_STALE_SECONDS',
       10,
       7200,
+    ),
+    DOCUMENT_STORAGE_DIR: parseStorageDirectory(input.DOCUMENT_STORAGE_DIR),
+    // Configurable safety limits, not verified capacity. Must match the web proxy and the AI service.
+    DOCUMENT_MAX_BYTES: parseInteger(
+      input.DOCUMENT_MAX_BYTES,
+      52428800,
+      'DOCUMENT_MAX_BYTES',
+      1024,
+      1073741824,
+    ),
+    DOCUMENT_MAX_CONCURRENCY: parseInteger(
+      input.DOCUMENT_MAX_CONCURRENCY,
+      1,
+      'DOCUMENT_MAX_CONCURRENCY',
+      1,
+      8,
+    ),
+    DOCUMENT_JOB_LEASE_SECONDS: parseInteger(
+      input.DOCUMENT_JOB_LEASE_SECONDS,
+      90,
+      'DOCUMENT_JOB_LEASE_SECONDS',
+      3,
+      3600,
+    ),
+    // Must exceed the AI service's own processing timeout (default 600 s).
+    DOCUMENT_JOB_TIMEOUT_SECONDS: parseInteger(
+      input.DOCUMENT_JOB_TIMEOUT_SECONDS,
+      660,
+      'DOCUMENT_JOB_TIMEOUT_SECONDS',
+      1,
+      14400,
+    ),
+    DOCUMENT_MAX_ATTEMPTS: parseInteger(
+      input.DOCUMENT_MAX_ATTEMPTS,
+      3,
+      'DOCUMENT_MAX_ATTEMPTS',
+      1,
+      10,
+    ),
+    DOCUMENT_POLL_INTERVAL_MS: parseInteger(
+      input.DOCUMENT_POLL_INTERVAL_MS,
+      2000,
+      'DOCUMENT_POLL_INTERVAL_MS',
+      50,
+      60000,
+    ),
+    DOCUMENT_WORKER_ENABLED: parseBoolean(
+      input.DOCUMENT_WORKER_ENABLED,
+      true,
+      'DOCUMENT_WORKER_ENABLED',
+    ),
+    DOCUMENT_ORPHAN_GRACE_SECONDS: parseInteger(
+      input.DOCUMENT_ORPHAN_GRACE_SECONDS,
+      600,
+      'DOCUMENT_ORPHAN_GRACE_SECONDS',
+      1,
+      86400,
     ),
   };
 }
