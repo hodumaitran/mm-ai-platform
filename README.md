@@ -11,8 +11,14 @@ service: a registry sealed at startup, true single-pass rendering, execution reb
 invocations (a caller cannot forge an execution), runtime-limited options and an accuracy-labelled
 token budget (an estimate, not a tokenizer count). It is internal only and always runs through the
 existing LLM Gateway; public chat and SSE contracts remain unchanged. See
-`docs/checkpoints/checkpoint-2.6.md` for the acceptance status. Authentication, databases, RAG, agents,
-and a final chat UI remain intentionally absent.
+`docs/checkpoints/checkpoint-2.6.md` for the acceptance status.
+
+Checkpoint 2.7 adds a stateless, trust-classified context manager on top of it: caller-supplied
+immutable conversation snapshots made of complete turns, untrusted reference material, deterministic
+budgeted selection with reported exclusions, and execution only through the existing gateway. It is
+internal (no public endpoint) and structural isolation is not tenant authorization; see
+`docs/architecture/context-management.md` and `docs/checkpoints/checkpoint-2.7.md`. Authentication,
+databases, RAG, agents, and a final chat UI remain intentionally absent.
 
 ## Prerequisites
 

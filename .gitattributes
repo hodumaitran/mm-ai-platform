@@ -1,0 +1,4 @@
+# Keep line endings identical on every platform. The index already stores LF and .editorconfig
+# and Prettier require LF, so never let a checkout convert text files to CRLF (Windows runners
+# default to core.autocrlf=true). Git still auto-detects and leaves binary files untouched.
+* text=auto eol=lf

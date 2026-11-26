@@ -4,9 +4,11 @@ import logging
 import math
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
+from mm_ai_service.application.deadline import Clock, RequestDeadline
 from mm_ai_service.application.gateway import LLMGateway
 from mm_ai_service.application.observability import EventLogger
 from mm_ai_service.domain.errors import (
@@ -29,6 +31,7 @@ from mm_ai_service.domain.llm import (
     GenerationOptions,
     MessageRole,
     StreamEvent,
+    ThinkingConfiguration,
     validate_model_identifier,
 )
 from mm_ai_service.domain.prompts import (
@@ -272,6 +275,23 @@ class PromptRenderer:
         return str(value)
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedPrompt:
+    """Validated trusted prompt parts and effective limits, before any budget check."""
+
+    definition: PromptDefinition
+    profile: PromptProfile
+    rendered: RenderedPrompt
+    user_message: ChatMessage
+    options: GenerationOptions
+    context_limit: int
+    thinking: ThinkingConfiguration
+
+    @property
+    def output_tokens(self) -> int:
+        return self.options.max_output_tokens or 0
+
+
 class PromptService:
     """Trusted internal entry point; it cannot create prompts or bypass the LLM gateway.
 
@@ -289,6 +309,7 @@ class PromptService:
         renderer: PromptRenderer | None = None,
         estimator: TokenEstimator | None = None,
         logger: EventLogger | None = None,
+        clock: Clock = time.monotonic,
     ) -> None:
         if not registry.is_sealed:
             raise ConfigurationError()
@@ -304,10 +325,25 @@ class PromptService:
         self._renderer = renderer or PromptRenderer()
         self._estimator: TokenEstimator = estimator or HeuristicTokenEstimator()
         self._logger = logger
+        self._clock = clock
+
+    @property
+    def clock(self) -> Clock:
+        """Monotonic clock used for request-budget accounting (injectable for tests)."""
+        return self._clock
 
     @property
     def gateway(self) -> LLMGateway:
         return self._gateway
+
+    @property
+    def estimator(self) -> TokenEstimator:
+        """The single authoritative estimator; context management reuses it."""
+        return self._estimator
+
+    @property
+    def model_identifier(self) -> str:
+        return self._model
 
     def prepare(self, invocation: PromptInvocation) -> PromptExecution:
         """Validate policy and assemble messages; never touches the provider."""
@@ -338,7 +374,12 @@ class PromptService:
                 metadata={"outcome": "rejected", "error_code": code},
             )
 
-    def _prepare(self, invocation: PromptInvocation, started: float) -> PromptExecution:
+    def resolve(self, invocation: PromptInvocation) -> ResolvedPrompt:
+        """Validate and render trusted prompt parts; budget checks belong to the caller.
+
+        The result is inspection data for trusted application services (for example the
+        context manager). It is never accepted by ``complete`` or ``stream``.
+        """
         if not isinstance(invocation, PromptInvocation):
             raise PromptPolicyViolationError()
         profile = self._registry.resolve_profile(invocation.profile_identifier)
@@ -380,25 +421,48 @@ class PromptService:
             context_window=context,
             stop_sequences=requested.stop_sequences,
         )
-        messages = (*rendered.messages, ChatMessage(MessageRole.USER, user_content))
+        return ResolvedPrompt(
+            definition=definition,
+            profile=profile,
+            rendered=rendered,
+            user_message=ChatMessage(MessageRole.USER, user_content),
+            options=resolved_options,
+            context_limit=min(effective_context, context),
+            thinking=invocation.thinking,
+        )
+
+    def _prepare(self, invocation: PromptInvocation, started: float) -> PromptExecution:
+        resolved = self.resolve(invocation)
+        messages = (*resolved.rendered.messages, resolved.user_message)
+        output = resolved.output_tokens
         budget = self._estimator.estimate(messages, output)
-        if budget.total_tokens > min(effective_context, context):
+        if budget.total_tokens > resolved.context_limit:
             raise PromptBudgetExceededError()
-        request = CompletionRequest(self._model, messages, resolved_options, invocation.thinking)
+        request = CompletionRequest(self._model, messages, resolved.options, resolved.thinking)
         metadata = PromptExecutionMetadata(
-            definition.identifier,
-            definition.version,
-            profile.identifier,
+            resolved.definition.identifier,
+            resolved.definition.version,
+            resolved.profile.identifier,
             budget,
             float((time.perf_counter() - started) * 1000),
         )
-        return PromptExecution(request, rendered, metadata, resolved_options)
+        return PromptExecution(request, resolved.rendered, metadata, resolved.options)
 
-    async def complete(self, invocation: PromptInvocation) -> CompletionResponse:
+    async def complete(
+        self, invocation: PromptInvocation, *, timeout_seconds: float | None = None
+    ) -> CompletionResponse:
+        # The budget starts before preparation; the gateway receives only what is left.
+        deadline = RequestDeadline(self._gateway.deadline_seconds(timeout_seconds), self._clock)
         execution = self.prepare(invocation)
-        return await self._gateway.complete(execution.request)
+        return await self._gateway.complete(execution.request, timeout_seconds=deadline.remaining())
 
-    async def stream(self, invocation: PromptInvocation) -> AsyncIterator[StreamEvent]:
+    async def stream(
+        self, invocation: PromptInvocation, *, timeout_seconds: float | None = None
+    ) -> AsyncIterator[StreamEvent]:
+        # The budget starts when iteration begins (generators are lazy), before preparation.
+        deadline = RequestDeadline(self._gateway.deadline_seconds(timeout_seconds), self._clock)
         execution = self.prepare(invocation)
-        async for event in self._gateway.stream(execution.request):
+        async for event in self._gateway.stream(
+            execution.request, timeout_seconds=deadline.remaining()
+        ):
             yield event

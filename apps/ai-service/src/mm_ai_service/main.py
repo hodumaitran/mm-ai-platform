@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from fastapi import FastAPI
 
+from mm_ai_service.application.context import ContextService
 from mm_ai_service.application.gateway import GatewayPolicy, LLMGateway
 from mm_ai_service.application.lifecycle import ManagedResource
 from mm_ai_service.application.observability import EventLogger
@@ -82,6 +83,8 @@ def create_app(
         logger=resolved_logger,
     )
 
+    context_service = ContextService(prompt_service, logger=resolved_logger)
+
     app = FastAPI(
         title="MM AI Service",
         description="Private model-agnostic AI service boundary",
@@ -92,6 +95,7 @@ def create_app(
     )
     app.add_middleware(RequestContextMiddleware, logger=resolved_logger)
     app.state.prompt_service = prompt_service
+    app.state.context_service = context_service
     register_error_handlers(app, resolved_logger)
     app.include_router(
         create_operations_router(

@@ -197,3 +197,32 @@ class PromptRegistrySealedError(ServiceError):
 class InvalidPromptProfileError(ServiceError):
     def __init__(self) -> None:
         super().__init__("INVALID_PROMPT_PROFILE", "The prompt profile is invalid.", 422)
+
+
+class InvalidConversationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_CONVERSATION", "The conversation history is invalid.", 400)
+
+
+class InvalidContextItemError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_CONTEXT_ITEM", "A context item is invalid.", 400)
+
+
+class InvalidContextPolicyError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_CONTEXT_POLICY", "The context policy is invalid.", 422)
+
+
+class ContextPolicyViolationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "CONTEXT_POLICY_VIOLATION", "The context request violates its policy.", 422
+        )
+
+
+class ContextBudgetExceededError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "CONTEXT_BUDGET_EXCEEDED", "The mandatory context exceeds the available budget.", 422
+        )

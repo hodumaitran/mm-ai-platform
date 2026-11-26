@@ -22,3 +22,9 @@ LLM Gateway events contain only fixed event names and safe machine error codes. 
 provider configuration, prompts, completions, token content, and reasoning traces are not logged.
 The Ollama adapter emits no request/response logs, ignores `message.thinking` payloads, disables
 environment-derived HTTP proxies, and never serializes raw provider errors.
+
+Checkpoint 2.7 extends the allowlist, after privacy review and with disclosure tests, by these bounded
+content-free keys: `context_items`, `context_limit`, `history_turns_included`,
+`history_turns_excluded`, `reference_items_included`, `reference_items_excluded`, `prompt_identifier`,
+`prompt_version`. Prompt identifiers and versions are server-owned values. Conversation identifiers,
+history, reference text, user content, and variable values are never logged and have no allowlisted key.

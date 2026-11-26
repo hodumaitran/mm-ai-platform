@@ -36,7 +36,9 @@ service.
 The admission controller defaults to one active and one pending request. Admission, first-content,
 stream-inactivity, and total request timeouts are independently bounded. The incoming remaining
 deadline is clamped to the service policy, so a downstream service cannot extend the caller's budget.
-A queued request therefore cannot wait indefinitely.
+A queued request therefore cannot wait indefinitely. `deadline_seconds(timeout)` exposes the validated,
+capped total so services that prepare work first can start their clock before that work and pass only the
+remainder (see `context-management.md`).
 
 Context managers release capacity after success, normalized failure, timeout, or cancellation.
 External `asyncio.CancelledError` is logged only as a safe event and re-raised unchanged. It is not

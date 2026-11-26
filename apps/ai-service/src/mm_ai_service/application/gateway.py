@@ -233,6 +233,13 @@ class LLMGateway:
             raise internal_error from None
         self._event(logging.INFO, "llm.stream_finished")
 
+    def deadline_seconds(self, timeout_seconds: float | None = None) -> float:
+        """Effective total budget: a validated caller timeout capped at the gateway maximum.
+
+        Invalid values raise ``REQUEST_DEADLINE_EXCEEDED`` exactly as they do for ``complete``.
+        """
+        return self._deadline(timeout_seconds)
+
     def _deadline(self, timeout_seconds: float | None) -> float:
         if timeout_seconds is None:
             return self._policy.request_timeout_seconds
