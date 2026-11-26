@@ -226,3 +226,63 @@ class ContextBudgetExceededError(ServiceError):
         super().__init__(
             "CONTEXT_BUDGET_EXCEEDED", "The mandatory context exceeds the available budget.", 422
         )
+
+
+class InvalidToolDefinitionError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_TOOL_DEFINITION", "The tool definition is invalid.", 422)
+
+
+class DuplicateToolRegistrationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("DUPLICATE_TOOL_REGISTRATION", "The tool is already registered.", 409)
+
+
+class ToolRegistrySealedError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_REGISTRY_SEALED", "The tool registry is sealed.", 409)
+
+
+class InvalidToolPolicyError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_TOOL_POLICY", "The tool execution policy is invalid.", 422)
+
+
+class InvalidToolCallError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_TOOL_CALL", "The tool call is invalid.", 422)
+
+
+class InvalidToolArgumentsError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("INVALID_TOOL_ARGUMENTS", "The tool arguments are invalid.", 422)
+
+
+class UnknownToolError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_NOT_FOUND", "The requested tool is not registered.", 404)
+
+
+class ToolNotAuthorizedError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_NOT_AUTHORIZED", "The tool is not authorized for execution.", 403)
+
+
+class ToolOverloadError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_OVERLOADED", "Tool execution capacity is exhausted.", 429)
+
+
+class ToolTimeoutError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_TIMEOUT", "The tool exceeded its execution time limit.", 504)
+
+
+class ToolResultTooLargeError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_RESULT_TOO_LARGE", "The tool result exceeds its size limit.", 502)
+
+
+class ToolExecutionError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("TOOL_EXECUTION_FAILED", "The tool failed to execute.", 502)

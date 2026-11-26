@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 
+from mm_ai_service.application.deadline import validate_timeout_seconds
 from mm_ai_service.application.observability import EventLogger
 from mm_ai_service.application.registry import ProviderRegistry
 from mm_ai_service.domain.errors import (
@@ -243,13 +244,7 @@ class LLMGateway:
     def _deadline(self, timeout_seconds: float | None) -> float:
         if timeout_seconds is None:
             return self._policy.request_timeout_seconds
-        if (
-            isinstance(timeout_seconds, bool)
-            or not isinstance(timeout_seconds, (int, float))
-            or timeout_seconds <= 0
-        ):
-            raise RequestDeadlineExceededError()
-        return min(float(timeout_seconds), self._policy.request_timeout_seconds)
+        return min(validate_timeout_seconds(timeout_seconds), self._policy.request_timeout_seconds)
 
     def _prepare_request(
         self, request: CompletionRequest, capabilities: ModelCapabilities

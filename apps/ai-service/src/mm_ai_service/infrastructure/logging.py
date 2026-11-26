@@ -12,6 +12,7 @@ SAFE_METADATA_KEYS = frozenset(
     {
         "duration_ms",
         "admission_outcome",
+        "argument_count",
         "completion_tokens",
         "context_items",
         "context_limit",
@@ -29,10 +30,12 @@ SAFE_METADATA_KEYS = frozenset(
         "reference_items_excluded",
         "reference_items_included",
         "resource",
+        "result_chars",
         "route",
         "status_code",
         "time_to_first_content_ms",
         "timeout_category",
+        "tool_name",
     }
 )
 
