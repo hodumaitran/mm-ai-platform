@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { validateWebEnvironment } from './environment.ts';
 
+// Upstream failures keep their category so the UI can distinguish them; bodies are never forwarded.
+const PASSTHROUGH_STATUSES = new Set([400, 413, 415, 422, 429, 503, 504]);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 export async function forwardChatRequest(request: Request, stream: boolean): Promise<Response> {
@@ -37,6 +39,14 @@ export async function forwardChatRequest(request: Request, stream: boolean): Pro
       },
       signal: controller.signal,
     });
+    if (!upstream.ok) {
+      void upstream.body?.cancel();
+      cleanup(timer, request, abort);
+      return safeError(
+        PASSTHROUGH_STATUSES.has(upstream.status) ? upstream.status : 502,
+        requestId,
+      );
+    }
     const expectedType = stream ? 'text/event-stream' : 'application/json';
     const contentType = upstream.headers.get('content-type') ?? '';
     if (!contentType.startsWith(expectedType) || upstream.body === null) {

@@ -6,8 +6,15 @@ from pydantic import ValidationError
 from starlette.requests import ClientDisconnect, Request
 
 from mm_ai_service.config import Settings
+from mm_ai_service.domain.context import (
+    ContextExecutionMetadata,
+    ContextInvocation,
+    ConversationIdentifier,
+    ConversationSnapshot,
+)
 from mm_ai_service.domain.errors import (
     InvalidCompletionRequestError,
+    InvalidConversationError,
     InvalidRequestError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
@@ -15,7 +22,6 @@ from mm_ai_service.domain.errors import (
 from mm_ai_service.domain.llm import (
     ChatMessage,
     CompletionFinished,
-    CompletionRequest,
     CompletionResponse,
     ContentDelta,
     GenerationOptions,
@@ -28,6 +34,7 @@ from mm_ai_service.domain.llm import (
     TokenUsage,
     UsageUpdate,
 )
+from mm_ai_service.domain.prompts import PromptIdentifier, PromptInvocation
 from mm_ai_service.presentation.chat_contracts import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -88,29 +95,59 @@ def request_timeout_seconds(request: Request, settings: Settings) -> float:
     return min(remaining, settings.llm_request_timeout_seconds)
 
 
-def to_domain_request(payload: ChatCompletionRequest, settings: Settings) -> CompletionRequest:
-    roles = {
-        PublicMessageRole.USER: MessageRole.USER,
-        PublicMessageRole.ASSISTANT: MessageRole.ASSISTANT,
-    }
+def to_context_invocation(payload: ChatCompletionRequest, settings: Settings) -> ContextInvocation:
+    """Map a validated public request onto the server-owned MM AI prompt profile.
+
+    The last message is the current user turn; earlier messages become conversation history that the
+    context manager may drop (whole turns, oldest first) to respect the budget. The system prompt is
+    owned by the profile and is never taken from the client.
+    """
     thinking = (
         ThinkingMode.ENABLED
         if payload.thinking.mode is PublicThinkingMode.ENABLED
         else ThinkingMode.DISABLED
     )
+    *earlier, current = payload.messages
     try:
-        return CompletionRequest(
-            settings.ollama_model,
-            tuple(ChatMessage(roles[item.role], item.content) for item in payload.messages),
-            GenerationOptions(
-                temperature=payload.generation.temperature,
-                max_output_tokens=payload.generation.max_output_tokens,
-                context_window=settings.llm_default_context_window,
+        history = ConversationSnapshot.from_messages(
+            ConversationIdentifier("chat"),
+            tuple(
+                ChatMessage(
+                    MessageRole.USER
+                    if item.role is PublicMessageRole.USER
+                    else MessageRole.ASSISTANT,
+                    item.content,
+                )
+                for item in earlier
             ),
-            ThinkingConfiguration(thinking),
         )
-    except InvalidCompletionRequestError:
+        return ContextInvocation(
+            PromptInvocation(
+                PromptIdentifier("mm-ai"),
+                current.content,
+                options=GenerationOptions(
+                    temperature=payload.generation.temperature,
+                    max_output_tokens=payload.generation.max_output_tokens,
+                    context_window=settings.llm_default_context_window,
+                ),
+                thinking=ThinkingConfiguration(thinking),
+            ),
+            conversation=history,
+        )
+    except (InvalidCompletionRequestError, InvalidConversationError):
         raise InvalidRequestError() from None
+
+
+def context_event(metadata: ContextExecutionMetadata, request_id: str) -> bytes:
+    """Public, non-sensitive summary of how much history the server could use."""
+    payload = {
+        "version": "1",
+        "request_id": request_id,
+        "history_turns_included": metadata.history_turns_included,
+        "history_turns_excluded": metadata.history_turns_excluded,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"))
+    return f"event: context.prepared\ndata: {encoded}\n\n".encode()
 
 
 def completion_response(response: CompletionResponse, request_id: str) -> ChatCompletionResponse:

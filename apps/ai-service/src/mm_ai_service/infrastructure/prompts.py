@@ -13,6 +13,17 @@ from mm_ai_service.domain.prompts import (
     PromptVersion,
 )
 
+# Server-owned identity for the public chat endpoint. Clients can never supply or read it.
+MM_AI_SYSTEM_PROMPT = (
+    "You are MM AI, the internal AI assistant of MM Research. "
+    "Reply in the language the user writes in unless they ask for another one. "
+    "Be accurate and concise. Never invent facts, figures, sources or quotations; "
+    "if you are unsure or lack the information, say so plainly. "
+    "In this conversation you have no Internet access and no access to MM Research "
+    "documents, systems or data, so never claim or imply otherwise; "
+    "work only from what the user tells you and from general knowledge."
+)
+
 
 def build_builtin_prompt_registry() -> PromptRegistry:
     registry = PromptRegistry()
@@ -26,6 +37,11 @@ def build_builtin_prompt_registry() -> PromptRegistry:
         trusted=True,
     )
     definitions = (
+        PromptDefinition(
+            PromptIdentifier("mm-ai-assistant"),
+            version,
+            (PromptMessageTemplate(MessageRole.SYSTEM, MM_AI_SYSTEM_PROMPT),),
+        ),
         PromptDefinition(
             PromptIdentifier("general-assistant"),
             version,
@@ -57,6 +73,16 @@ def build_builtin_prompt_registry() -> PromptRegistry:
     )
     for definition in definitions:
         registry.register(definition, default=True)
+    registry.register_profile(
+        PromptProfile(
+            PromptIdentifier("mm-ai"),
+            PromptIdentifier("mm-ai-assistant"),
+            version,
+            policy=PromptPolicy(
+                max_user_characters=4096, max_output_tokens=1024, max_context_tokens=4096
+            ),
+        )
+    )
     registry.register_profile(
         PromptProfile(
             PromptIdentifier("general"),

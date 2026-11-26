@@ -116,6 +116,7 @@ def create_app(
         create_operations_router(
             resolved_settings,
             gateway,
+            context_service,
             resolved_readiness_probe,
             resolved_logger,
         )

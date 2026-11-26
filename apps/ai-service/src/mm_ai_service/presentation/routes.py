@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from starlette.types import Message
 
+from mm_ai_service.application.context import ContextService
 from mm_ai_service.application.gateway import LLMGateway
 from mm_ai_service.application.observability import EventLogger
 from mm_ai_service.application.readiness import (
@@ -22,11 +23,12 @@ from mm_ai_service.domain.llm import CompletionFinished, ContentDelta, StreamErr
 from mm_ai_service.presentation.chat_contracts import ChatCompletionResponse
 from mm_ai_service.presentation.chat_transport import (
     completion_response,
+    context_event,
     read_chat_request,
     request_timeout_seconds,
     safe_stream_error,
     sse_event,
-    to_domain_request,
+    to_context_invocation,
 )
 
 
@@ -61,6 +63,7 @@ async def _wait_for_disconnect(receive: Callable[[], Awaitable[Message]]) -> Non
 def create_operations_router(
     settings: Settings,
     gateway: LLMGateway,
+    context_service: ContextService,
     readiness_probe: ReadinessProbe | None = None,
     logger: EventLogger | None = None,
 ) -> APIRouter:
@@ -86,9 +89,12 @@ def create_operations_router(
         started = time.perf_counter()
         request_id = request.state.request_id
         payload = await read_chat_request(request, settings)
+        prepared = context_service.prepare(
+            to_context_invocation(payload, settings), request_id=request_id
+        )
         response = await _await_or_disconnect(
             gateway.complete(
-                to_domain_request(payload, settings),
+                prepared.request,
                 timeout_seconds=request_timeout_seconds(request, settings),
             ),
             request.receive,
@@ -116,8 +122,11 @@ def create_operations_router(
         request_id = request.state.request_id
         started = time.perf_counter()
         payload = await read_chat_request(request, settings)
+        prepared = context_service.prepare(
+            to_context_invocation(payload, settings), request_id=request_id
+        )
         stream = gateway.stream(
-            to_domain_request(payload, settings),
+            prepared.request,
             timeout_seconds=request_timeout_seconds(request, settings),
         )
         try:
@@ -133,6 +142,8 @@ def create_operations_router(
             completion_tokens: int | None = None
             try:
                 yield sse_event(first_event, request_id)
+                if not terminal:
+                    yield context_event(prepared.metadata, request_id)
                 async for event in stream:
                     if isinstance(event, ContentDelta) and first_content_ms is None:
                         first_content_ms = round((time.perf_counter() - started) * 1000, 3)
